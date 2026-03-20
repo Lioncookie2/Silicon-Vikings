@@ -1,112 +1,54 @@
-# YOLOv8 Baseline for NorgesGruppen Product Detection
+# Silicon Vikings — NM i AI 2026
 
-Dette prosjektet setter opp en første fungerende YOLOv8-baseline for object detection på butikkhyllebilder.
+Monorepo for alle tre oppgavene: **NorgesGruppen** (objektdeteksjon), **Tripletex** (regnskapsagent), **Astar Island** (verdensprediksjon). Se også [dokumentasjon](https://app.ainm.no/docs).
 
-## 1) Datastruktur
+## Mappestruktur
 
-Plasser data slik:
+| Mappe | Innhold |
+|-------|---------|
+| [norgesgruppen/](norgesgruppen/) | YOLOv8-pipeline, `submission/run.py`, trenings-skript |
+| [tripletex/](tripletex/) | FastAPI `/solve`, LLM-agent, Docker/Cloud Run |
+| [astar/](astar/) | API-klient, utforskning, prediksjonsinnsending |
+| [gcp/](gcp/) | Google Cloud-oppsett (primært Tripletex) |
+| `data/` | COCO-data og YOLO-eksport (`data/yolo/` etter `prepare_dataset`) |
 
-- `data/raw/train_images/` - alle treningsbilder
-- `data/raw/annotations.json` - COCO-annotasjoner
-- `data/raw/product_images/` - referansebilder (brukes ikke i baseline v1)
-
-## 2) Installer avhengigheter
-
-Kjør fra prosjektroten (`Norgesgruppen Data`):
+## NorgesGruppen — rask start
 
 ```bash
 pip install -r requirements.txt
+python norgesgruppen/scripts/prepare_dataset.py
+python norgesgruppen/scripts/train_yolo.py
+cp runs/ngd_yolo/baseline/weights/best.pt norgesgruppen/submission/best.pt
+bash norgesgruppen/scripts/package_submission.sh
 ```
 
-## 3) Klargjor YOLO-datasett
+Eldre snarvei fra rot: `python scripts/prepare_dataset.py` (videresender til `norgesgruppen/scripts/`).
 
-Konverter COCO til YOLO-format og splitt 85/15 train/val:
+**PyTorch 2.6:** trenings-skript laster `torch_compat` for YOLO `.pt`-vekter. `submission/run.py` har innebygd samme patch (selvstendig zip til konkurransen).
+
+## Tripletex — rask start
 
 ```bash
-python scripts/prepare_dataset.py
+pip install -r tripletex/requirements.txt
+export GEMINI_API_KEY=...   # eller OPENAI_API_KEY
+export PYTHONPATH=.
+uvicorn tripletex.main:app --host 0.0.0.0 --port 8000
 ```
 
-Valgfrie argumenter:
+Deploy: [gcp/setup.md](gcp/setup.md) og [tripletex/Dockerfile](tripletex/Dockerfile).
+
+## Astar Island — rask start
 
 ```bash
-python scripts/prepare_dataset.py --seed 42 --train-ratio 0.85
+pip install -r astar/requirements.txt
+export ACCESS_TOKEN=...   # JWT fra app.ainm.no
+export PYTHONPATH=.
+python -m astar.predict --dry-run          # uten API
+python -m astar.predict                    # sender inn (krever aktiv runde)
+python -m astar.explore --max-queries 50   # viewport-utforskning
 ```
 
-Etter kjoering lages:
+## Konkurranse
 
-- `data/yolo/images/train/`
-- `data/yolo/images/val/`
-- `data/yolo/labels/train/`
-- `data/yolo/labels/val/`
-- `data/yolo/data.yaml`
-
-## 4) Tren YOLOv8-baseline
-
-Trening starter fra `yolov8m.pt`:
-
-```bash
-python scripts/train_yolo.py
-```
-
-Standardinnstillinger:
-
-- `imgsz=1280`
-- `epochs=100`
-- `patience=20`
-- `batch=-1` (fallback til `8` ved behov)
-- GPU (`device=0`) hvis tilgjengelig, ellers CPU
-- output til `runs/ngd_yolo/baseline/`
-
-Forventet modellsti:
-
-- `runs/ngd_yolo/baseline/weights/best.pt`
-
-## 5) Lokal validering i konkurranseformat
-
-Kjor inferens lokalt og skriv JSON i konkurranseformat:
-
-```bash
-python scripts/validate_local.py --model runs/ngd_yolo/baseline/weights/best.pt --input data/yolo/images/val --output submission/local_predictions.json --conf 0.25 --imgsz 1280
-```
-
-## 6) Klargjor submission
-
-Kopier beste modell til `submission/`:
-
-```bash
-copy runs\ngd_yolo\baseline\weights\best.pt submission\best.pt
-```
-
-Sorg for at `submission/` inneholder minst:
-
-- `run.py`
-- `best.pt`
-
-Pakk innholdet i `submission/` slik at `run.py` ligger i roten av zip-filen.
-
-Eksempel med PowerShell:
-
-```powershell
-Compress-Archive -Path submission\* -DestinationPath submission.zip -Force
-```
-
-## Konkurransegrensesnitt
-
-Arrangoren kjører:
-
-```bash
-python run.py --input /data/images --output /output/predictions.json
-```
-
-`submission/run.py` skriver en JSON-liste med objekter:
-
-```json
-{
-  "image_id": 42,
-  "category_id": 17,
-  "bbox": [x, y, w, h],
-  "score": 0.91
-}
-```
-
-der `category_id` matcher datasettet, og bbox er i format `[x, y, width, height]`.
+- Totalscore: gjennomsnitt av de tre oppgavene (ca. 33 % hver).
+- GCP (Cloud Run, Vertex/Gemini) er valgfritt men anbefalt for Tripletex HTTPS-endepunkt — se [gcp/PLAN.md](gcp/PLAN.md).

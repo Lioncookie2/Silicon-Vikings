@@ -1,0 +1,18 @@
+# Cloud Build: build and push image to Artifact Registry, then deploy Cloud Run (optional second step).
+# Replace PROJECT_ID, REGION, REPO, SERVICE_NAME.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - tripletex/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:${SHORT_SHA}
+      - .
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:${SHORT_SHA}"
+
+substitutions:
+  _REGION: europe-north1
+  _REPO: nmiai
+  _IMAGE: tripletex-agent

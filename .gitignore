@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# YOLO / training
+runs/
+*.cache
+data/yolo/
+
+# Models & submissions (large / local)
+*.pt.bak
+submission_ng.zip
+norgesgruppen/submission/best.pt
+norgesgruppen/submission/test_predictions.json
+norgesgruppen/submission/local_predictions.json
+
+# OS
+.DS_Store
+__MACOSX/

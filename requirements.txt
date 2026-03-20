@@ -3,3 +3,4 @@ torch==2.6.0
 torchvision==0.21.0
 pillow
 numpy
+ensemble-boxes>=1.0.9

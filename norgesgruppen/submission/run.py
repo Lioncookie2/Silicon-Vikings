@@ -6,6 +6,7 @@ from pathlib import Path
 
 import torch
 
+# PyTorch 2.6+ defaults weights_only=True; official YOLO .pt need False (trusted weights).
 _orig_torch_load = torch.load
 
 
