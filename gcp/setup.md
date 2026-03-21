@@ -22,12 +22,12 @@ gcloud config set project YOUR_PROJECT_ID
 Fra **repo-roten** `Silicon-Vikings/`:
 
 ```bash
-export PROJECT_ID=your-project
 export REGION=europe-north1
-gcloud builds submit --config tripletex/cloudbuild.yaml --substitutions=PROJECT_ID=$PROJECT_ID
+# Bygger image med tag :latest og :$BUILD_ID (SHORT_SHA brukes ikke ved manuell submit).
+gcloud builds submit --config tripletex/cloudbuild.yaml .
 ```
 
-Tilpass `tripletex/cloudbuild.yaml` med deres Artifact Registry-repo og image-navn.
+Tilpass `tripletex/cloudbuild.yaml` (`_REGION`, `_REPO`, `_IMAGE`) ved behov.
 
 Deretter Cloud Run (eksempel):
 

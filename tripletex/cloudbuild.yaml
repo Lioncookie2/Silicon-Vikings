@@ -1,5 +1,9 @@
-# Cloud Build: build and push image to Artifact Registry, then deploy Cloud Run (optional second step).
-# Replace PROJECT_ID, REGION, REPO, SERVICE_NAME.
+# Cloud Build: build and push image to Artifact Registry.
+# $PROJECT_ID and $BUILD_ID are built-in (always set). SHORT_SHA is empty when using
+# `gcloud builds submit .` without a connected repo — do not use it as tag.
+#
+# Deploy: gcloud run deploy ... --image ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:$BUILD_ID
+# Or tag :latest in a second step (see gcp/setup.md).
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
@@ -7,10 +11,13 @@ steps:
       - -f
       - tripletex/Dockerfile
       - -t
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:${SHORT_SHA}
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:$BUILD_ID
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:latest
       - .
 images:
-  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:${SHORT_SHA}"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:$BUILD_ID"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:latest"
 
 substitutions:
   _REGION: europe-north1
