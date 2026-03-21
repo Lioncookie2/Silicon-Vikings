@@ -224,6 +224,12 @@ Rules:
   GET  /activity/>forTimeSheet      params: {projectId:X, employeeId:Y, date:"YYYY-MM-DD",
                                              fields:"id,name"}
                                     — find valid activities for a specific project/employee/date
+  POST /activity                    body: {name:"...", number:"...", isGeneral:true,
+                                           activityType:{id:X}}
+                                    — activityType is REQUIRED (422 if null/missing).
+                                      Look up valid types with GET /activity/type first:
+                                      GET /activity/type  params: {fields:"id,name", count:20}
+                                      Then use one of the returned ids as activityType:{id:X}.
   NOTE: /timesheet/activity does NOT exist — always use /activity
 
 ### Timesheet entries (hours worked)
@@ -371,7 +377,13 @@ Rules:
 19. For tasks about overdue/unpaid/late invoices: ALWAYS search invoices with HISTORY_START (3 years
     back) as invoiceDateFrom, not just YEAR_START. If the first GET /invoice returns zero results,
     immediately retry with invoiceDateFrom=HISTORY_START before giving up.
-    NEVER output done after a single empty invoice search without trying the wider date range."""
+    NEVER output done after a single empty invoice search without trying the wider date range.
+20. ANALYSIS-ONLY tasks: if the task only asks to analyze, identify, find, compare, summarize,
+    or report (German: analysieren, identifizieren, vergleichen, erkennen / Norwegian: analysere,
+    identifisere, finn, rapporter) — and contains NO action verbs like "create", "register",
+    "post", "add" — use ONLY GET calls and then output {"action":"done","reasoning":"<findings>"}
+    with the full analysis in the reasoning field. Do NOT create projects, activities, vouchers,
+    or any other objects just because the analysis revealed data about them."""
 
 
 # ── LLM backends ─────────────────────────────────────────────────────────────
@@ -919,6 +931,19 @@ def solve(
                     "Do NOT send {id:X} or call GET /employee/userType (that path does not exist). "
                     "Fix: add \"userType\": \"STANDARD_USER\" to the body."
                 )
+            if status == 422 and method.upper() == "POST" and p_low.rstrip("/").endswith("/activity"):
+                if "activityType" in str(body_text).lower() or "activitytype" in str(body_text).lower():
+                    feedback += (
+                        "\n\nHINT: POST /activity requires activityType:{id:X}. "
+                        "Call GET /activity/type (params: fields='id,name', count=20) first, "
+                        "then use one of the returned ids: activityType:{id:X}. "
+                        "Do NOT omit activityType or set it to null."
+                    )
+                if "project" in str(body_text).lower() and "eksisterer ikke" in str(body_text).lower():
+                    feedback += (
+                        "\n\nHINT: POST /activity does NOT accept a 'project' field — "
+                        "activities are global, not per-project. Remove the 'project' field from the body."
+                    )
             if status == 400 and method.upper() == "GET" and "/invoice" in p_low and "dueDate" in str(body_text):
                 feedback += (
                     "\n\nHINT: GET /invoice `fields` must use only InvoiceDTO field names. "
