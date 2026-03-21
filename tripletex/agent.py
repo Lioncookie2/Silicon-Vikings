@@ -76,7 +76,8 @@ Rules:
 
 ### Orders
   POST /order             body: {customer:{id:X}, orderDate:"YYYY-MM-DD", deliveryDate:"YYYY-MM-DD"}
-  POST /order/{id}/orderline   body: {product:{id:X}, count:N, unitPriceExcludingVat:N}
+  POST /order/orderline   body: {order:{id:Y}, product:{id:X}, count:N, unitPriceExcludingVatCurrency:N}
+                          NOTE: /order/{id}/orderline does NOT exist (404). Use /order/orderline.
 
 ### Invoices
   GET  /invoice           params: {invoiceDateFrom:"YYYY-MM-DD", invoiceDateTo:"YYYY-MM-DD",
@@ -180,6 +181,8 @@ Rules:
 11. For ALL PUT requests: first GET the resource to obtain its current "version" number.
     Include version in the PUT body: {"version": N, ...other fields...}
     Without version, Tripletex returns 422.
+12. On 404 errors: assume wrong endpoint/path first.
+    Do NOT call the same 404 endpoint again. Switch to a different documented endpoint.
 """
 
 
