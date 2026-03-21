@@ -303,3 +303,58 @@ Alternativt egen metrikk for `jsonPayload.message=~"^run_summary"` med `jsonPayl
 ## Deploy (GCP)
 
 Se [gcp/setup.md](../gcp/setup.md).
+
+## Daglig playbook (maksimere Tripletex-score)
+
+Mål: **riktig sluttstate i sandkassen** og **færre unødvendige skrivekall** (POST/PUT/DELETE). Bruk én fast runde per dag du konkurrerer.
+
+### 1) Start (10–15 min)
+
+1. `cd ~/Silicon-Vikings && git pull`
+2. Bekreft at du er på siste `main` (sjekk at teamets siste fiks er med — f.eks. `POST /employee` / userType).
+3. Bygg og deploy Cloud Run etter [gcp/setup.md](../gcp/setup.md) (`gcloud builds submit` → `gcloud run deploy`).
+4. Test: `curl -sS "$SERVICE_URL/health"` → `{"status":"ok"}`.
+5. Lim inn **HTTPS-URL** på app.ainm.no (samme URL hver gang med mindre dere bytter tjeneste).
+
+### 2) Cloud Shell — klargjør logger (2 min)
+
+```bash
+cd ~/Silicon-Vikings
+export PROJECT_ID=<ditt-prosjekt>
+gcloud config set project "$PROJECT_ID"
+source tripletex/scripts/tripletex_shell.sh
+```
+
+### 3) For hver oppgave du sender inn (etter score)
+
+1. `ttx_logs_recent 1h` → noter **`request_id`** for siste kjøring.
+2. `ttx_logs_rid <uuid>` → lim inn i notat / del med team om dere feilsøker sammen.
+3. Sjekk **`run_summary`**: `outcome` (`agent_done` vs `max_steps`), `api_error_count`, `last_error_path`, `had_max_steps`.
+4. Klassifiser i én setning, f.eks.: «userType 422», «voucher PUT fortegn», «404 feil bilags-id», «bankkontonummer», «hard_stop».
+
+### 4) Prioriter neste kodefiks (høyest effekt først)
+
+| Signal | Typisk tiltak |
+|--------|----------------|
+| Samme `path` + 422 ofte | Utvid `SYSTEM_PROMPT` med én presis regel **eller** deterministisk handler i `task_handlers/` |
+| `max_steps` / `hard_stop` | Kortere vei i prompten; færre «prøv igjen»-løkker; evt. øk `MAX_STEPS` bare hvis dere har tokens/steg-budsjett |
+| `404` på `/ledger/voucher/{id}` | Prompt/hint: id **kun** fra `GET /ledger/voucher` i periode (allerede i agent) — vurder sterkere tvang i hint |
+| `agent_done` men lav score | Ofte «falsk ferdig» — se siste `reasoning` og siste vellykkede API-kall; mangler steg (lønn, bilag, …) |
+| Mange GET på samme path | OK for poeng; fokuser på å kutte unødvendige POST/PUT |
+
+Etter fiks: **commit → push → deploy** før neste innsending.
+
+### 5) Slutt på dagen (10 min)
+
+```bash
+ttx_summarize 24h
+ttx_report
+```
+
+eller `ttx_summarize_csv 7d` → se hvilke **paths** som topper `api_error`. Noter 1–3 mønstre dere skal ta neste økt.
+
+### 6) Husk
+
+- Tilfeldige oppgaver → dere optimaliserer **porteføljen** (mange typer), ikke én oppgavetekst.
+- Logger **øker ikke** score alene; de **peker** på hva som skal endres i `agent.py` / `task_handlers/`.
+- Etter deploy: logger skal ha `jsonPayload.log_schema="v2-rich"` (se avsnitt om strukturert logging over).
