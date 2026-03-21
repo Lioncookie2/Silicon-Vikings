@@ -275,6 +275,14 @@ Rules:
   CRITICAL: Do NOT include a "row" field in posting objects — row 0 is system-generated and causes 422.
             Omit "row" entirely from every posting object.
   NOTE: amountGross is the gross amount including VAT. Tripletex calculates net/VAT split automatically.
+  NOTE: If you set amountGross, also set amountGrossCurrency to the **same numeric value** (422 if they differ).
+  NOTE: **VAT type per account**: each ledger account has a default/locked VAT treatment in the chart.
+            If validationMessages say «låst til mva-kode 0» / "locked to VAT code 0", you MUST use the 0% VAT type id
+            from GET /ledger/vatType (e.g. "Ingen avgiftsbehandling") for **that posting line** — do not use 25% in
+            on accounts locked to 0%.
+  NOTE: For the **credit (kreditor)** line, use a real **accounts payable** account (typically **2400** —
+            «Leverandørgjeld» / trade payables), NOT random balance-sheet accounts (2290, 2180, 2360, …) which are
+            often locked to 0% and will reject wrong VAT.
   NOTE: /ledger/voucher GET requires dateFrom and dateTo (REQUIRED params).
 
 ### Ledger review / correction (hovedbok, finn feil i bilag, rette posteringsfeil)
@@ -304,6 +312,21 @@ Rules:
 
 ### Modules (enable accounting features)
   PUT  /company/settings/accounting  body: {use_department_accounting:true} (example)
+
+### Free accounting dimensions (custom dimensions — «egen dimensjon» / French: dimension comptable)
+  Tripletex v2.73+ exposes **user-defined dimensions** (up to 3 slots). Requires Pro package and API role
+  «Regnskapsinnstillinger, kontoplan og historisk balanse» for POST/PUT.
+  Flow when the task asks to create a dimension named X with values A, B, …:
+  1. GET /ledger/accountingDimensionName   params: {fields:"id,name,dimensionIndex", count:10}
+     — see existing dimensions and free slots (index 1–3).
+  2. POST /ledger/accountingDimensionName  body: {name:"Produktlinje"}  — creates next free slot (adjust fields per validationMessages if 422).
+  3. GET /ledger/accountingDimensionValue  params: {fields:"id,name,accountingDimensionName", count:50}
+  4. POST /ledger/accountingDimensionValue  body: {name:"Basis", accountingDimensionName:{id:DIMENSION_NAME_ID}}
+  5. POST /ledger/accountingDimensionValue  body: {name:"Avansert", accountingDimensionName:{id:SAME_ID}}
+  When posting a voucher, attach the chosen value to each posting line using PostingDTO fields (writable since v2.72.05):
+    freeAccountingDimension1:{id:VALUE_ID}   — use slot 1, 2, or 3 matching the dimensionIndex from step 1
+    (or freeAccountingDimension2 / freeAccountingDimension3 for the other slots)
+  If these endpoints return 403/404, the company may lack Pro or the integration key lacks rights — document in done reasoning.
 
 ### Employment & salary (set/update salary for an employee)
   GET  /employee/employment          params: {employeeId:X, fields:"id,employee,startDate"}
@@ -383,7 +406,12 @@ Rules:
     identifisere, finn, rapporter) — and contains NO action verbs like "create", "register",
     "post", "add" — use ONLY GET calls and then output {"action":"done","reasoning":"<findings>"}
     with the full analysis in the reasoning field. Do NOT create projects, activities, vouchers,
-    or any other objects just because the analysis revealed data about them."""
+    or any other objects just because the analysis revealed data about them.
+21. POST /ledger/voucher postings: match **vatType** on each line to that account's locked default
+    (read validationMessages — «låst til mva-kode 0» → use 0% vatType id). Use **2400** (leverandørgjeld)
+    for supplier/AP credit lines unless the task names another payable account. If using amountGross,
+    set amountGrossCurrency to the same value. For custom dimensions, use /ledger/accountingDimensionName
+    + /ledger/accountingDimensionValue + freeAccountingDimension1/2/3 on postings (see section above)."""
 
 
 # ── LLM backends ─────────────────────────────────────────────────────────────
@@ -918,13 +946,26 @@ def solve(
                 feedback += (
                     "\n\nHINT: fixedPrice is NOT a field on ProjectDTO. "
                     "Do not try to set fixedPrice via POST/PUT /project — it will always fail. "
-                    "Try GET /project/projectType to see project types, or skip fixed-price if unavailable."
+                    "Use POST /order/orderline on an order linked to the project, or document limitation in done."
                 )
             if status == 422 and method.upper() == "POST" and (path or "").rstrip("/") == "/ledger/voucher":
+                bt = str(body_text).lower()
                 feedback += (
                     "\n\nHINT: POST /ledger/voucher usually needs voucherType:{id} from GET /ledger/voucherType. "
                     "For hovedbok correction, search with GET /ledger/posting + GET /ledger/voucher, then PUT/DELETE."
                 )
+                if "låst" in bt or "locked" in bt or "mva-kode" in bt or "vattype" in bt:
+                    feedback += (
+                        "\n\nHINT: Account is locked to a specific VAT code — GET /ledger/vatType and use the id "
+                        "that matches the message (often 0% / «Ingen avgiftsbehandling»). "
+                        "Do NOT use 25% input VAT on liability accounts locked to 0%. "
+                        "For supplier-style vouchers credit **2400** (leverandørgjeld), not random 22xx/23xx accounts."
+                    )
+                if "amountgross" in bt and "amountgrosscurrency" in bt:
+                    feedback += (
+                        "\n\nHINT: amountGross and amountGrossCurrency must be equal on each posting. "
+                        "Either set both to the same number or omit gross fields and use amountCurrency with vatType."
+                    )
             if status == 422 and method.upper() == "POST" and p_low.rstrip("/").endswith("/employee"):
                 feedback += (
                     "\n\nHINT: userType must be a string: \"STANDARD_USER\" (default), \"EMPLOYEE\", or \"ADMINISTRATOR\". "
