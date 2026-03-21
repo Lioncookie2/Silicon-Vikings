@@ -65,10 +65,18 @@ Rules:
   PUT /employee/{id}/employment/... — use employeeId link
   To set admin role: PUT /employee/{id} body: {"administrator":true}
 
-### Customers
+### Customers (kjøpere — entities you sell TO)
   POST /customer          body: {name, email, isCustomer:true, phone(optional)}
   GET  /customer          params: {name:"...", fields:"id,name,email", count:10}
   PUT  /customer/{id}     body: partial update
+  NOTE: Use /customer for OUTGOING invoices (sales). For bills you RECEIVE from vendors, use /supplier.
+
+### Suppliers (leverandører — vendors you buy FROM)
+  POST /supplier          body: {name:"...", organizationNumber:"...", email(optional)}
+  GET  /supplier          params: {name:"...", organizationNumber:"...",
+                                   fields:"id,name,organizationNumber,version", count:10}
+  PUT  /supplier/{id}     body: {version:N, ...fields to update...}
+  NOTE: Use /supplier when the task involves an incoming invoice, purchase, or bill from a vendor.
 
 ### Products
   POST /product           body: {name, number(optional), costExcludingVatCurrency,
@@ -153,6 +161,33 @@ Rules:
 ### Departments
   POST /department        body: {name:"...", departmentNumber:"..."}
   GET  /department        params: {fields:"id,name", count:10}
+
+### Incoming invoices / supplier invoices (leverandørfaktura — bills you RECEIVE)
+  IMPORTANT: When the task mentions "leverandørfaktura", "inngående faktura", "supplier invoice",
+  "Lieferantenrechnung", "factura de proveedor", or similar — do NOT use /invoice.
+  Use this flow instead:
+  Step 1: GET /supplier?name=...    — find or verify supplier exists
+  Step 2: POST /supplier            — create supplier if not found
+            body: {name:"...", organizationNumber:"..."}
+  Step 3: GET /ledger/account       — find account numbers (e.g. account 6300 for office services,
+            params: {fields:"id,number,name", count:100}   2711 for input VAT, 2400 for accounts payable)
+  Step 4: GET /ledger/vatType       — find correct VAT type by percentage
+  Step 5: POST /ledger/voucher      — create the accounting entry (bilag)
+            body: {
+              date: "YYYY-MM-DD",
+              description: "Invoice description",
+              externalVoucherNumber: "INV-...",
+              postings: [
+                {date:"YYYY-MM-DD", description:"Expense description",
+                 account:{id:EXPENSE_ACCOUNT_ID}, supplier:{id:SUPPLIER_ID},
+                 vatType:{id:VAT_TYPE_ID}, amountGross:TOTAL_INCL_VAT},
+                {date:"YYYY-MM-DD", description:"Accounts payable",
+                 account:{id:PAYABLE_ACCOUNT_ID}, supplier:{id:SUPPLIER_ID},
+                 amountGross:-TOTAL_INCL_VAT}
+              ]
+            }
+  NOTE: amountGross is the gross amount including VAT. Tripletex calculates net/VAT split automatically.
+  NOTE: /ledger/voucher GET requires dateFrom and dateTo (REQUIRED params).
 
 ### Ledger / accounts
   GET  /ledger/account    params: {fields:"id,number,name", count:100}
