@@ -879,6 +879,22 @@ def solve(
     # Try a deterministic handler before falling back to the LLM agent loop
     if not files and try_handle_deterministically(prompt, client, today, year_start):
         log_event("INFO", "deterministic_handler", result="task handled without LLM")
+        log_event(
+            "INFO",
+            "run_summary",
+            outcome="deterministic",
+            steps_used=1,
+            api_error_count=0,
+            json_parse_error_count=0,
+            hard_stop_count=0,
+            client_error_count=0,
+            error_loop_count=0,
+            success_loop_count=0,
+            had_max_steps=False,
+            last_error_path="",
+            last_error_status=0,
+            task_preview=prompt[:200],
+        )
         return
 
     # Build initial user message
@@ -906,6 +922,19 @@ def solve(
     recent_calls: list[tuple[str, str]] = []  # (method, path) of successful calls
     path_fail_streak: dict[tuple[str, str], int] = {}  # (method, path) → consecutive failures
 
+    run_stats = {
+        "api_error_count": 0,
+        "json_parse_error_count": 0,
+        "hard_stop_count": 0,
+        "client_error_count": 0,
+        "error_loop_count": 0,
+        "success_loop_count": 0,
+        "last_error_path": "",
+        "last_error_status": 0,
+    }
+    finished_via_done = False
+    hit_max_steps = False
+
     for step in range(MAX_STEPS):
         log_event("DEBUG", "llm_call", step=step, context_messages=len(messages))
         raw_llm = _llm_complete(messages)
@@ -913,6 +942,7 @@ def solve(
         try:
             action = _extract_json(raw_llm)
         except (ValueError, json.JSONDecodeError) as e:
+            run_stats["json_parse_error_count"] += 1
             log_event("WARNING", "json_parse_error", step=step, error=str(e))
             messages.append({"role": "assistant", "content": raw_llm})
             messages.append({
@@ -934,6 +964,7 @@ def solve(
         )
 
         if action_type == "done":
+            finished_via_done = True
             log_event("INFO", "agent_done", step=step, reasoning=str(action.get("reasoning", ""))[:400])
             break
 
@@ -949,6 +980,7 @@ def solve(
         try:
             resp = _execute_call(client, action)
         except Exception as e:
+            run_stats["client_error_count"] += 1
             log_event("ERROR", "client_error", step=step, error=str(e))
             messages.append({
                 "role": "user",
@@ -975,6 +1007,9 @@ def solve(
         }, ensure_ascii=False)[:truncate_limit]
 
         if is_error:
+            run_stats["api_error_count"] += 1
+            run_stats["last_error_path"] = str(path or "")
+            run_stats["last_error_status"] = int(status)
             log_api_error(step, method, path, status, body_text)
             # Track per-path consecutive failures (body-independent)
             pk = (method.upper(), (path or "").rstrip("/"))
@@ -1135,6 +1170,7 @@ def solve(
             pk = (method.upper(), (path or "").rstrip("/"))
             path_streak = path_fail_streak.get(pk, 0)
             if n_identical >= 5 or path_streak >= 5:
+                run_stats["hard_stop_count"] += 1
                 log_event(
                     "ERROR", "hard_stop",
                     step=step, call_key=str(call_key), n_identical=n_identical,
@@ -1150,6 +1186,7 @@ def solve(
                 })
                 continue
             elif n_identical >= 3 or path_streak >= 3:
+                run_stats["error_loop_count"] += 1
                 log_event(
                     "WARNING", "error_loop",
                     step=step, call_key=str(call_key), n_identical=n_identical,
@@ -1165,6 +1202,7 @@ def solve(
             call_key = _call_signature(action)
             recent_calls.append(call_key)
             if len(recent_calls) >= 3 and len(set(recent_calls[-3:])) == 1:
+                run_stats["success_loop_count"] += 1
                 log_event("WARNING", "success_loop", step=step, call_key=str(call_key))
                 feedback += (
                     "\n\nWARNING: You have called this exact endpoint 3 times in a row with 200 responses. "
@@ -1175,6 +1213,32 @@ def solve(
         messages.append({"role": "user", "content": feedback})
 
     else:
+        hit_max_steps = True
         log_event("WARNING", "max_steps_reached", max_steps=MAX_STEPS)
 
-    log_event("INFO", "agent_finished", steps_used=min(step + 1, MAX_STEPS))
+    steps_used = min(step + 1, MAX_STEPS)
+    log_event("INFO", "agent_finished", steps_used=steps_used)
+
+    if finished_via_done:
+        outcome = "agent_done"
+    elif hit_max_steps:
+        outcome = "max_steps"
+    else:
+        outcome = "incomplete"
+
+    log_event(
+        "INFO",
+        "run_summary",
+        outcome=outcome,
+        steps_used=steps_used,
+        api_error_count=run_stats["api_error_count"],
+        json_parse_error_count=run_stats["json_parse_error_count"],
+        hard_stop_count=run_stats["hard_stop_count"],
+        client_error_count=run_stats["client_error_count"],
+        error_loop_count=run_stats["error_loop_count"],
+        success_loop_count=run_stats["success_loop_count"],
+        had_max_steps=hit_max_steps,
+        last_error_path=run_stats["last_error_path"],
+        last_error_status=run_stats["last_error_status"],
+        task_preview=prompt[:200],
+    )

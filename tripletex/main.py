@@ -52,6 +52,23 @@ async def solve_endpoint(request: Request) -> JSONResponse:
             solve(str(prompt), files, creds, work, request_id=request_id)
         except Exception as exc:
             log_event("ERROR", "solve_exception", error=str(exc), request_id=request_id)
+            log_event(
+                "INFO",
+                "run_summary",
+                request_id=request_id,
+                outcome="exception",
+                steps_used=0,
+                api_error_count=-1,
+                json_parse_error_count=-1,
+                hard_stop_count=-1,
+                client_error_count=-1,
+                error_loop_count=-1,
+                success_loop_count=-1,
+                had_max_steps=False,
+                last_error_path="",
+                last_error_status=0,
+                task_preview=(prompt[:200] if prompt else ""),
+            )
             traceback.print_exc()
             return JSONResponse({"status": "error", "detail": str(exc)}, status_code=500)
 

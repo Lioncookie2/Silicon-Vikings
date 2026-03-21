@@ -67,6 +67,11 @@ def _build_rich_message(
         "file_count",
         "max_steps",
         "steps_used",
+        "outcome",
+        "api_error_count",
+        "had_max_steps",
+        "last_error_status",
+        "last_error_path",
     ):
         if key in payload and payload[key] is not None:
             val = payload[key]
