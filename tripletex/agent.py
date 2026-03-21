@@ -1,7 +1,16 @@
 """
-LLM agent: parse accounting task prompt -> structured API plan -> execute with TripletexClient.
+Tripletex AI accounting agent — agentic loop with response-chaining.
 
-Set one of: GEMINI_API_KEY, GOOGLE_API_KEY, or OPENAI_API_KEY (optional: OPENAI_BASE_URL).
+Flow per request:
+  1. Decode any attached files (PDF → text via pypdf or Gemini multimodal).
+  2. Feed task prompt + file content into an LLM conversation.
+  3. LLM returns ONE action at a time: {"action":"call", ...} or {"action":"done"}.
+  4. Execute the call, append result (incl. returned IDs) to conversation.
+  5. Repeat up to MAX_STEPS or until action == "done".
+
+Supported LLM backends (checked in order):
+  GEMINI_API_KEY / GOOGLE_API_KEY  → google-generativeai (Gemini 2.0 Flash)
+  OPENAI_API_KEY                   → openai (GPT-4o-mini by default)
 """
 from __future__ import annotations
 
@@ -12,132 +21,251 @@ import re
 from pathlib import Path
 from typing import Any
 
+import requests as _requests
+
 from .tripletex_client import TripletexClient
 
+# ── constants ────────────────────────────────────────────────────────────────
+MAX_STEPS = 20          # hard cap — never loop forever
+RESPONSE_TRUNCATE = 800  # chars to include from each API response in conversation
 
-SYSTEM_PROMPT = """You are an expert Tripletex accounting API agent for NM i AI 2026.
-The user message contains a task in one of several languages (Norwegian, English, etc.).
-You must output ONLY valid JSON (no markdown fences) with this shape:
-{
-  "reasoning": "short internal plan",
-  "calls": [
-    {"method": "GET|POST|PUT|DELETE", "path": "/employee", "params": null, "json": null},
-    ...
-  ]
-}
+# ── system prompt ─────────────────────────────────────────────────────────────
+SYSTEM_PROMPT = """You are an expert Tripletex v2 REST API agent for NM i AI 2026.
+
+## Your job
+Complete the accounting task described by the user by making Tripletex API calls.
+You control the API one step at a time. After each call you will see the API response
+and must decide what to do next.
+
+## Output format (STRICT — no markdown fences, pure JSON only)
+Each turn output EXACTLY ONE of:
+
+Call action:
+{"action":"call","method":"GET|POST|PUT|DELETE","path":"/endpoint","params":{},"json":{}}
+
+Done action (task complete):
+{"action":"done","reasoning":"short explanation"}
+
 Rules:
-- Paths are Tripletex REST v2 paths relative to base_url (e.g. /employee, /customer, /invoice).
-- Order calls so prerequisites exist (e.g. create customer before invoice if needed).
-- Use fields query param on GET when listing, e.g. params: {"fields": "id,firstName,lastName"}
-- For POST/PUT, put body in "json".
-- Minimize the number of calls. Avoid speculative GETs.
-- If the task references attached files, the prompt may include extracted filenames — infer required data from the task text.
+- "params" and "json" can be null if not needed.
+- "method" must be uppercase.
+- Never output anything except the JSON object.
+
+## Key Tripletex v2 endpoints
+
+### Employees
+  POST /employee          body: {firstName, lastName, email, employeeNumber(optional)}
+  GET  /employee          params: {fields:"id,firstName,lastName,email", count:10}
+  PUT  /employee/{id}     body: partial update
+
+### Roles (assign after creating employee)
+  PUT /employee/{id}/employment/... — use employeeId link
+  To set admin role: PUT /employee/{id} body: {"administrator":true}
+
+### Customers
+  POST /customer          body: {name, email, isCustomer:true, phone(optional)}
+  GET  /customer          params: {name:"...", fields:"id,name,email", count:10}
+  PUT  /customer/{id}     body: partial update
+
+### Products
+  POST /product           body: {name, number(optional), costExcludingVatCurrency, priceExcludingVatCurrency}
+  GET  /product           params: {fields:"id,name,number", count:10}
+
+### Orders
+  POST /order             body: {customer:{id:X}, orderDate:"YYYY-MM-DD", deliveryDate:"YYYY-MM-DD"}
+  POST /order/{id}/orderline   body: {product:{id:X}, count:N, unitPriceExcludingVat:N}
+
+### Invoices
+  POST /invoice           body: {invoiceDate:"YYYY-MM-DD", invoiceDueDate:"YYYY-MM-DD",
+                                  customer:{id:X}, orders:[{id:Y}]}
+  PUT  /invoice/{id}/:send    — send invoice by email
+
+### Payments
+  POST /invoice/{id}/payment  body: {paymentDate:"YYYY-MM-DD", paymentTypeId:2,
+                                      amount:X, currency:{id:1}}
+
+### Credit notes
+  POST /invoice/{id}/createCreditNote  body: {date:"YYYY-MM-DD"}
+
+### Travel expenses
+  POST /travelExpense      body: {employee:{id:X}, description:"...", travelDetails:{...}}
+  GET  /travelExpense      params: {fields:"id,description", count:10}
+  DELETE /travelExpense/{id}
+
+### Projects
+  POST /project           body: {name:"...", customer:{id:X}, startDate:"YYYY-MM-DD"}
+  GET  /project           params: {fields:"id,name", count:10}
+
+### Departments
+  POST /department        body: {name:"...", departmentNumber:"..."}
+  GET  /department        params: {fields:"id,name", count:10}
+
+### Ledger / accounts
+  GET  /ledger/account    params: {fields:"id,number,name", count:100}
+
+### Modules (enable accounting features)
+  PUT  /company/settings/accounting  body: {use_department_accounting:true} (example)
+
+## Response format from Tripletex
+  Success POST/PUT:  {"value": {"id": 123, ...}}     ← use value.id in next call
+  Success GET:       {"values": [...], "count": N}    ← use values[i].id
+  Error:             {"message":"...", "validationMessages":[...]}
+
+## Important rules
+1. ALWAYS use the "id" from a previous response when referencing entities.
+2. Never guess IDs — fetch them with GET first if you don't have them.
+3. On 4xx errors: read the message and fix the request in the next step.
+4. Use today's date (from the task or context) for all date fields.
+5. If the sandbox is empty, create prerequisites first (e.g. customer before invoice).
+6. Minimize write calls — every unnecessary POST/PUT/DELETE reduces your score.
+7. GET calls are free — use them to look up IDs or verify.
+8. When done, output {"action":"done","reasoning":"..."} — never loop unnecessarily.
 """
 
 
-def _call_gemini(prompt: str) -> str:
-    import google.generativeai as genai
+# ── LLM backends ─────────────────────────────────────────────────────────────
+
+def _call_gemini(messages: list[dict[str, str]]) -> str:
+    import google.generativeai as genai  # type: ignore
 
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
         raise RuntimeError("Set GEMINI_API_KEY or GOOGLE_API_KEY")
     genai.configure(api_key=key)
     model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-    model = genai.GenerativeModel(model_name)
-    resp = model.generate_content([SYSTEM_PROMPT, prompt])
+    model = genai.GenerativeModel(
+        model_name,
+        system_instruction=SYSTEM_PROMPT,
+    )
+    # Build Gemini conversation from messages list (skip system)
+    history = []
+    last_user = None
+    for m in messages:
+        role = "user" if m["role"] == "user" else "model"
+        if role == "user":
+            last_user = m["content"]
+        else:
+            if last_user:
+                history.append({"role": "user", "parts": [last_user]})
+                last_user = None
+            history.append({"role": "model", "parts": [m["content"]]})
+    # Start chat with history (all but last user msg)
+    chat = model.start_chat(history=history)
+    resp = chat.send_message(last_user or "continue")
     return resp.text or ""
 
 
-def _call_openai(prompt: str) -> str:
-    from openai import OpenAI
+def _call_openai(messages: list[dict[str, str]]) -> str:
+    from openai import OpenAI  # type: ignore
 
     client = OpenAI(
         api_key=os.environ.get("OPENAI_API_KEY"),
         base_url=os.environ.get("OPENAI_BASE_URL"),
     )
+    openai_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
     r = client.chat.completions.create(
         model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
+        messages=openai_messages,
         temperature=0.1,
     )
     return r.choices[0].message.content or ""
 
 
-def _llm_complete(user_prompt: str) -> str:
+def _llm_complete(messages: list[dict[str, str]]) -> str:
     if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        return _call_gemini(user_prompt)
+        return _call_gemini(messages)
     if os.environ.get("OPENAI_API_KEY"):
-        return _call_openai(user_prompt)
-    raise RuntimeError(
-        "No LLM API key: set GEMINI_API_KEY, GOOGLE_API_KEY, or OPENAI_API_KEY"
-    )
+        return _call_openai(messages)
+    raise RuntimeError("No LLM API key: set GEMINI_API_KEY, GOOGLE_API_KEY, or OPENAI_API_KEY")
 
+
+# ── action parsing ────────────────────────────────────────────────────────────
 
 def _extract_json(text: str) -> dict[str, Any]:
     text = text.strip()
+    # Strip markdown fences if LLM disobeys
+    text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+    text = re.sub(r"\n?```$", "", text.strip())
     m = re.search(r"\{[\s\S]*\}", text)
     if not m:
-        raise ValueError(f"No JSON object in LLM output: {text[:500]}")
+        raise ValueError(f"No JSON in LLM output: {text[:400]}")
     return json.loads(m.group(0))
 
 
-def _save_files(files: list[dict[str, str]], workdir: Path) -> list[str]:
-    saved: list[str] = []
+# ── single API call execution ─────────────────────────────────────────────────
+
+def _execute_call(
+    client: TripletexClient, action: dict[str, Any]
+) -> _requests.Response:
+    method = (action.get("method") or "GET").upper()
+    path = action.get("path") or "/"
+    params = action.get("params")
+    body = action.get("json")
+
+    if not isinstance(params, dict):
+        params = None
+    if not isinstance(body, dict):
+        body = None
+
+    if method == "GET":
+        return client.get(path, params=params)
+    elif method == "POST":
+        return client.post(path, json=body)
+    elif method == "PUT":
+        return client.put(path, json=body)
+    elif method == "DELETE":
+        return client.delete(path)
+    else:
+        raise ValueError(f"Unsupported HTTP method: {method}")
+
+
+# ── file handling ─────────────────────────────────────────────────────────────
+
+def _extract_pdf_text(raw: bytes) -> str:
+    """Extract text from PDF bytes using pypdf (lightweight, no network)."""
+    try:
+        from pypdf import PdfReader  # type: ignore
+        import io
+        reader = PdfReader(io.BytesIO(raw))
+        parts = []
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                parts.append(t)
+        return "\n".join(parts)[:3000]
+    except Exception:
+        return "(PDF — could not extract text)"
+
+
+def _process_files(files: list[dict[str, str]], workdir: Path) -> str:
+    """Decode base64 files, extract text from PDFs, return context string."""
     workdir.mkdir(parents=True, exist_ok=True)
+    context_parts: list[str] = []
     for f in files:
         name = f.get("filename") or "attachment.bin"
         content_b64 = f.get("content_base64") or ""
-        raw = base64.b64decode(content_b64)
+        try:
+            raw = base64.b64decode(content_b64)
+        except Exception:
+            continue
         path = workdir / name
         path.write_bytes(raw)
-        saved.append(str(path))
-    return saved
 
-
-def execute_plan(client: TripletexClient, plan: dict[str, Any]) -> None:
-    calls = plan.get("calls") or []
-    if not isinstance(calls, list):
-        raise ValueError("Invalid plan: calls must be a list")
-
-    for step in calls:
-        method = (step.get("method") or "GET").upper()
-        path = step.get("path") or "/"
-        params = step.get("params")
-        body = step.get("json")
-
-        if method == "GET":
-            r = client.get(path, params=params if isinstance(params, dict) else None)
-        elif method == "POST":
-            r = client.post(path, json=body if isinstance(body, dict) else None)
-        elif method == "PUT":
-            r = client.put(path, json=body if isinstance(body, dict) else None)
-        elif method == "DELETE":
-            r = client.delete(path)
+        ext = Path(name).suffix.lower()
+        if ext == ".pdf":
+            text = _extract_pdf_text(raw)
+            context_parts.append(f"[File: {name}]\n{text}")
+        elif ext in {".txt", ".csv", ".json"}:
+            try:
+                context_parts.append(f"[File: {name}]\n{raw.decode('utf-8', errors='replace')[:2000]}")
+            except Exception:
+                pass
         else:
-            raise ValueError(f"Unsupported method: {method}")
-
-        if r.status_code >= 400:
-            raise RuntimeError(
-                f"Tripletex API error {r.status_code} on {method} {path}: {r.text[:2000]}"
-            )
+            context_parts.append(f"[File: {name} — binary, {len(raw)} bytes]")
+    return "\n\n".join(context_parts)
 
 
-def build_user_prompt(
-    prompt: str,
-    file_paths: list[str],
-    tripletex_credentials: dict[str, str],
-) -> str:
-    parts = [
-        "TASK PROMPT:\n" + prompt,
-        f"base_url (for reference only): {tripletex_credentials.get('base_url', '')}",
-    ]
-    if file_paths:
-        parts.append("Saved attachment paths on server:\n" + "\n".join(file_paths))
-    return "\n\n".join(parts)
-
+# ── agentic loop ──────────────────────────────────────────────────────────────
 
 def solve(
     prompt: str,
@@ -145,13 +273,91 @@ def solve(
     tripletex_credentials: dict[str, str],
     workdir: Path,
 ) -> None:
+    """
+    Main entry point. Runs the agentic loop until done or MAX_STEPS reached.
+    The TripletexClient uses base_url + session_token from credentials.
+    """
     base_url = tripletex_credentials["base_url"]
     token = tripletex_credentials["session_token"]
     client = TripletexClient(base_url, token)
 
-    saved = _save_files(files, workdir)
-    user_text = build_user_prompt(prompt, saved, tripletex_credentials)
-    raw = _llm_complete(user_text)
-    plan = _extract_json(raw)
-    execute_plan(client, plan)
+    # Process attached files
+    file_context = _process_files(files, workdir)
 
+    # Build initial user message
+    user_message_parts = ["TASK:\n" + prompt]
+    if file_context:
+        user_message_parts.append("ATTACHED FILES:\n" + file_context)
+    user_message_parts.append(
+        "Solve this task step by step. "
+        "Output one JSON action per turn. "
+        "Use IDs from previous API responses. "
+        "When finished output {\"action\":\"done\"}."
+    )
+    initial_user = "\n\n".join(user_message_parts)
+
+    # Conversation history (role: "user" | "assistant")
+    messages: list[dict[str, str]] = [
+        {"role": "user", "content": initial_user}
+    ]
+
+    for step in range(MAX_STEPS):
+        raw_llm = _llm_complete(messages)
+
+        try:
+            action = _extract_json(raw_llm)
+        except (ValueError, json.JSONDecodeError) as e:
+            # Feed parse error back so LLM can self-correct
+            messages.append({"role": "assistant", "content": raw_llm})
+            messages.append({
+                "role": "user",
+                "content": f"ERROR: Could not parse your response as JSON: {e}. "
+                           "Output ONLY a valid JSON object."
+            })
+            continue
+
+        messages.append({"role": "assistant", "content": json.dumps(action)})
+
+        action_type = (action.get("action") or "call").lower()
+
+        if action_type == "done":
+            break
+
+        if action_type != "call":
+            messages.append({
+                "role": "user",
+                "content": f"Unknown action type '{action_type}'. Use 'call' or 'done'."
+            })
+            continue
+
+        # Execute the API call
+        try:
+            resp = _execute_call(client, action)
+        except Exception as e:
+            messages.append({
+                "role": "user",
+                "content": f"CLIENT ERROR: {e}\nFix your action and try again."
+            })
+            continue
+
+        # Summarise response for conversation (truncate large bodies)
+        status = resp.status_code
+        try:
+            body_text = resp.json()
+        except Exception:
+            body_text = resp.text
+
+        resp_summary = json.dumps({
+            "status": status,
+            "body": body_text,
+        }, ensure_ascii=False)[:RESPONSE_TRUNCATE]
+
+        if status >= 400:
+            feedback = (
+                f"API ERROR {status}:\n{resp_summary}\n"
+                "Read the error message carefully and fix the request."
+            )
+        else:
+            feedback = f"API SUCCESS {status}:\n{resp_summary}"
+
+        messages.append({"role": "user", "content": feedback})
