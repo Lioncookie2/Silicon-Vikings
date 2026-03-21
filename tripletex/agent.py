@@ -188,9 +188,30 @@ Rules:
             }
   NOTE: amountGross is the gross amount including VAT. Tripletex calculates net/VAT split automatically.
   NOTE: /ledger/voucher GET requires dateFrom and dateTo (REQUIRED params).
+  NOTE: POST /ledger/voucher often requires voucherType:{id:X}. GET /ledger/voucherType first to pick the right type.
+
+### Ledger review / correction (hovedbok, finn feil i bilag, rette posteringsfeil)
+  When the task asks to FIND ERRORS, REVIEW vouchers, FIX wrong account, REMOVE duplicate bilag,
+  or similar (Norwegian: "hovedbok", "bilag", "finn feil", "rett", "duplikat") — do NOT blindly POST /ledger/voucher.
+  Flow:
+  1. GET /ledger/account?fields=id,number,name&count=100  — ONCE, map account numbers (6540, 6860, 7000, …) to IDs
+  2. GET /ledger/posting?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&fields=*,account,voucher,amount,vatType
+     — dateFrom/dateTo are REQUIRED. Use the period from the task (e.g. Jan–Feb 2026 → 2026-01-01 to 2026-03-01 exclusive end).
+     Filter mentally or by accountId after resolving account IDs from step 1.
+  3. GET /ledger/voucher?dateFrom=...&dateTo=...&fields=*  — list bilag in the same period
+  4. GET /ledger/voucher/{id}?fields=*  — full voucher with postings for a specific bilag you need to fix
+  5. PUT /ledger/voucher/{id}?sendToLedger=true  body: {version:N, postings:[...]}  — update existing bilag (GET version first)
+  6. DELETE /ledger/voucher/{id}  — remove a duplicate bilag if the task says so
+  Keywords: "manglande MVA" = add/fix VAT line on posting; wrong konto = change account on posting.
 
 ### Ledger / accounts
   GET  /ledger/account    params: {fields:"id,number,name", count:100}
+  Call at most ONCE per task unless you need a broader search — do not repeat identical GETs.
+  GET  /ledger/voucherType  params: {fields:"id,name", count:50}  — bilagstyper; needed for POST /ledger/voucher
+  GET  /ledger/voucher       params: {dateFrom:"YYYY-MM-DD", dateTo:"YYYY-MM-DD", fields:"*", count:100}
+  GET  /ledger/voucher/{id}  params: {fields:"*"}
+  GET  /ledger/posting       params: {dateFrom:"YYYY-MM-DD", dateTo:"YYYY-MM-DD", fields:"*", count:1000}
+                               — dateFrom and dateTo are REQUIRED
 
 ### Modules (enable accounting features)
   PUT  /company/settings/accounting  body: {use_department_accounting:true} (example)
@@ -243,6 +264,9 @@ Rules:
     Without version, Tripletex returns 422.
 12. On 404 errors: assume wrong endpoint/path first.
     Do NOT call the same 404 endpoint again. Switch to a different documented endpoint.
+13. Tasks about reviewing or fixing the general ledger (hovedbok, bilag, posteringsfeil):
+    Search with GET /ledger/posting and GET /ledger/voucher using dateFrom/dateTo from the task period.
+    Do NOT create new vouchers with POST until you have identified what to fix.
 """
 
 
