@@ -97,8 +97,23 @@ Rules:
   POST /invoice/{id}/createCreditNote  body: {date:"YYYY-MM-DD"}
 
 ### Travel expenses
-  POST /travelExpense      body: {employee:{id:X}, description:"...", travelDetails:{...}}
-  GET  /travelExpense      params: {fields:"id,description", count:10}
+  POST /travelExpense      body: {
+                             employee:{id:X},
+                             description:"purpose of the trip",
+                             travelDetails:{
+                               departureDate:"YYYY-MM-DD",
+                               returnDate:"YYYY-MM-DD",
+                               departureFrom:"City A",
+                               destination:"City B",
+                               purpose:"Business meeting",
+                               isForeignTravel:false,
+                               isDayTrip:false,
+                               isCompensationFromRates:false
+                             }
+                           }
+                           NOTE: employee, description and travelDetails are required.
+                           travelDetails.departureDate and returnDate must be valid dates.
+  GET  /travelExpense      params: {fields:"id,description,employee", count:10}
   DELETE /travelExpense/{id}
 
 ### Projects
@@ -373,6 +388,7 @@ def solve(
         {"role": "user", "content": initial_user}
     ]
 
+    print(f"[agent] task: {prompt[:300]}")
     print(f"[agent] starting agentic loop, max_steps={MAX_STEPS}")
 
     recent_calls: list[tuple[str, str]] = []  # (method, path) of successful calls
@@ -444,15 +460,35 @@ def solve(
                 f"API ERROR {status}:\n{resp_summary}\n"
                 "Read the error message carefully and fix the request."
             )
-            # Also detect loops on error responses (e.g. repeated 404s)
+            # Also detect loops on error responses (e.g. repeated 404s / 422s)
             call_key = (action.get("method", "GET").upper(), action.get("path", ""))
             recent_calls.append(call_key)
-            if len(recent_calls) >= 3 and len(set(recent_calls[-3:])) == 1:
-                print(f"[step {step}] error loop detected — same failing endpoint called 3+ times")
+            # Count consecutive identical calls from the end
+            n_identical = 0
+            for c in reversed(recent_calls):
+                if c == call_key:
+                    n_identical += 1
+                else:
+                    break
+            if n_identical >= 5:
+                # Hard stop — LLM is ignoring the warnings, force it
+                print(f"[step {step}] hard stop — {n_identical} identical failures on {call_key}")
+                messages.append({"role": "user", "content": feedback})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "HARD STOP: You have failed on this exact endpoint 5 times in a row. "
+                        "You MUST output {\"action\":\"done\",\"reasoning\":\"could not complete — endpoint failed repeatedly\"} RIGHT NOW. "
+                        "Do NOT make any more API calls."
+                    )
+                })
+                continue
+            elif n_identical >= 3:
+                print(f"[step {step}] error loop detected — same failing endpoint called {n_identical}+ times")
                 feedback += (
-                    "\n\nWARNING: You have called this exact endpoint 3 times in a row and it keeps failing. "
-                    "This endpoint does NOT exist or you are using the wrong path. "
-                    "Stop trying it. Use a different endpoint or output {\"action\":\"done\"}."
+                    "\n\nWARNING: You have called this exact endpoint 3+ times in a row and it keeps failing. "
+                    "The request body or endpoint is wrong. "
+                    "Either fix the body based on the error message, or output {\"action\":\"done\"}."
                 )
         else:
             feedback = f"API SUCCESS {status}:\n{resp_summary}"
