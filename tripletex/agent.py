@@ -114,6 +114,30 @@ Rules:
 ### Modules (enable accounting features)
   PUT  /company/settings/accounting  body: {use_department_accounting:true} (example)
 
+### Employment & salary (set/update salary for an employee)
+  GET  /employee/employment          params: {employeeId:X, fields:"id,employee,startDate"}
+                                     — get the employment record ID for an employee
+  POST /employee/employment          body: {employee:{id:X}, startDate:"YYYY-MM-DD"}
+                                     — create employment if none exists
+  GET  /employee/employment/details  params: {employmentId:Y, fields:"id,employment,annualSalary,hourlyWage,remunerationType"}
+                                     — get current salary details
+  POST /employee/employment/details  body: {employment:{id:Y}, date:"YYYY-MM-DD",
+                                            remunerationType:"MONTHLY_WAGE",
+                                            annualSalary:360000,
+                                            percentageOfFullTimeEquivalent:100}
+                                     — set new salary (remunerationType: MONTHLY_WAGE or HOURLY_WAGE)
+  PUT  /employee/employment/details/{id}  body: same as POST above (update existing)
+  GET  /employee/employment/employmentType/salaryType  — list salary type IDs
+
+### Salary transactions / payroll runs
+  POST /salary/transaction           body: {date:"YYYY-MM-DD", year:YYYY, month:M,
+                                            payslips:[{employee:{id:X}}]}
+                                     — create a payroll run for one or more employees
+  GET  /salary/transaction/{id}      — get a payroll run
+  GET  /salary/payslip               params: {employeeId:X, yearFrom:YYYY, monthFrom:M,
+                                              yearTo:YYYY, monthTo:M, fields:"id,employee,amount"}
+                                     — get payslips for an employee
+
 ## Response format from Tripletex
   Success POST/PUT:  {"value": {"id": 123, ...}}     ← use value.id in next call
   Success GET:       {"values": [...], "count": N}    ← use values[i].id
@@ -130,6 +154,9 @@ Rules:
 8. When done, output {"action":"done","reasoning":"..."} — never loop unnecessarily.
 9. Never call the same endpoint more than twice in a row — you already have the data.
    If you received a 200 response, extract the IDs from it and move to the next step.
+10. NEVER output {"action":"done"} at step 0 without making at least one API call.
+    If you are unsure how to proceed, start by fetching the relevant entity (e.g. GET /employee).
+    Always attempt the task — do not refuse based on assumed API limitations.
 """
 
 
