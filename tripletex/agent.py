@@ -24,6 +24,7 @@ from typing import Any
 
 import requests as _requests
 
+from .structured_log import log_event, log_api_error
 from .task_handlers import try_handle_deterministically
 from .tripletex_client import TripletexClient
 
@@ -31,6 +32,7 @@ from .tripletex_client import TripletexClient
 MAX_STEPS = 20              # hard cap — never loop forever
 RESPONSE_TRUNCATE_GET = 4000   # GET list responses can be large — agent needs to see all IDs
 RESPONSE_TRUNCATE_WRITE = 800  # POST/PUT/DELETE only return {value:{id:X}}, so 800 is fine
+RESPONSE_TRUNCATE_ERROR = 2500  # error bodies may contain validationMessages — keep more
 
 # ── system prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert Tripletex v2 REST API agent for NM i AI 2026.
@@ -446,7 +448,7 @@ def solve(
 
     # Try a deterministic handler before falling back to the LLM agent loop
     if not files and try_handle_deterministically(prompt, client, today, year_start):
-        print("[agent] task handled deterministically — no LLM steps used")
+        log_event("INFO", "deterministic_handler", result="task handled without LLM")
         return
 
     # Build initial user message
@@ -469,19 +471,18 @@ def solve(
         {"role": "user", "content": initial_user}
     ]
 
-    print(f"[agent] task: {prompt[:300]}")
-    print(f"[agent] starting agentic loop, max_steps={MAX_STEPS}")
+    log_event("INFO", "agent_task", task_preview=prompt[:300], max_steps=MAX_STEPS)
 
     recent_calls: list[tuple[str, str]] = []  # (method, path) of successful calls
 
     for step in range(MAX_STEPS):
-        print(f"[step {step}] calling LLM ({len(messages)} messages in context)")
+        log_event("DEBUG", "llm_call", step=step, context_messages=len(messages))
         raw_llm = _llm_complete(messages)
 
         try:
             action = _extract_json(raw_llm)
         except (ValueError, json.JSONDecodeError) as e:
-            print(f"[step {step}] JSON parse error: {e} — feeding back to LLM")
+            log_event("WARNING", "json_parse_error", step=step, error=str(e))
             messages.append({"role": "assistant", "content": raw_llm})
             messages.append({
                 "role": "user",
@@ -493,14 +494,20 @@ def solve(
         messages.append({"role": "assistant", "content": json.dumps(action)})
 
         action_type = (action.get("action") or "call").lower()
-        print(f"[step {step}] action={action_type} method={action.get('method','')} path={action.get('path','')}")
+        method = action.get("method", "")
+        path = action.get("path", "")
+
+        log_event(
+            "INFO", "agent_action",
+            step=step, action=action_type, method=method, path=path,
+        )
 
         if action_type == "done":
-            print(f"[step {step}] agent done: {action.get('reasoning','')}")
+            log_event("INFO", "agent_done", step=step, reasoning=str(action.get("reasoning", ""))[:400])
             break
 
         if action_type != "call":
-            print(f"[step {step}] unknown action type: {action_type}")
+            log_event("WARNING", "unknown_action", step=step, action=action_type)
             messages.append({
                 "role": "user",
                 "content": f"Unknown action type '{action_type}'. Use 'call' or 'done'."
@@ -511,7 +518,7 @@ def solve(
         try:
             resp = _execute_call(client, action)
         except Exception as e:
-            print(f"[step {step}] client error: {e}")
+            log_event("ERROR", "client_error", step=step, error=str(e))
             messages.append({
                 "role": "user",
                 "content": f"CLIENT ERROR: {e}\nFix your action and try again."
@@ -525,8 +532,10 @@ def solve(
         except Exception:
             body_text = resp.text
 
+        is_error = status >= 400
         truncate_limit = (
-            RESPONSE_TRUNCATE_GET if action.get("method", "GET").upper() == "GET"
+            RESPONSE_TRUNCATE_ERROR if is_error
+            else RESPONSE_TRUNCATE_GET if method.upper() == "GET"
             else RESPONSE_TRUNCATE_WRITE
         )
         resp_summary = json.dumps({
@@ -534,15 +543,18 @@ def solve(
             "body": body_text,
         }, ensure_ascii=False)[:truncate_limit]
 
-        print(f"[step {step}] API {action.get('method','')} {action.get('path','')} → {status}")
+        if is_error:
+            log_api_error(step, method, path, status, body_text)
+        else:
+            log_event("INFO", "api_call", step=step, method=method, path=path, status=status)
 
-        if status >= 400:
+        if is_error:
             feedback = (
                 f"API ERROR {status}:\n{resp_summary}\n"
                 "Read the error message carefully and fix the request."
             )
             # Also detect loops on error responses (e.g. repeated 404s / 422s)
-            call_key = (action.get("method", "GET").upper(), action.get("path", ""))
+            call_key = (method.upper(), path)
             recent_calls.append(call_key)
             # Count consecutive identical calls from the end
             n_identical = 0
@@ -552,8 +564,10 @@ def solve(
                 else:
                     break
             if n_identical >= 5:
-                # Hard stop — LLM is ignoring the warnings, force it
-                print(f"[step {step}] hard stop — {n_identical} identical failures on {call_key}")
+                log_event(
+                    "ERROR", "hard_stop",
+                    step=step, call_key=str(call_key), n_identical=n_identical,
+                )
                 messages.append({"role": "user", "content": feedback})
                 messages.append({
                     "role": "user",
@@ -565,7 +579,10 @@ def solve(
                 })
                 continue
             elif n_identical >= 3:
-                print(f"[step {step}] error loop detected — same failing endpoint called {n_identical}+ times")
+                log_event(
+                    "WARNING", "error_loop",
+                    step=step, call_key=str(call_key), n_identical=n_identical,
+                )
                 feedback += (
                     "\n\nWARNING: You have called this exact endpoint 3+ times in a row and it keeps failing. "
                     "The request body or endpoint is wrong. "
@@ -574,10 +591,10 @@ def solve(
         else:
             feedback = f"API SUCCESS {status}:\n{resp_summary}"
             # Track successful calls for loop detection
-            call_key = (action.get("method", "GET").upper(), action.get("path", ""))
+            call_key = (method.upper(), path)
             recent_calls.append(call_key)
             if len(recent_calls) >= 3 and len(set(recent_calls[-3:])) == 1:
-                print(f"[step {step}] loop detected — same endpoint called 3+ times in a row")
+                log_event("WARNING", "success_loop", step=step, call_key=str(call_key))
                 feedback += (
                     "\n\nWARNING: You have called this exact endpoint 3 times in a row with 200 responses. "
                     "You already have all the data you need. Do NOT call it again. "
@@ -587,6 +604,6 @@ def solve(
         messages.append({"role": "user", "content": feedback})
 
     else:
-        print(f"[agent] reached MAX_STEPS={MAX_STEPS} without done action")
+        log_event("WARNING", "max_steps_reached", max_steps=MAX_STEPS)
 
-    print(f"[agent] finished after {min(step+1, MAX_STEPS)} steps")
+    log_event("INFO", "agent_finished", steps_used=min(step + 1, MAX_STEPS))
