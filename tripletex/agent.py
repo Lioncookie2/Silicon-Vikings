@@ -138,6 +138,11 @@ Rules:
                           NOTE: do NOT use "dueDate" in fields — it is NOT a field on InvoiceDTO (400 Illegal field).
                             Use invoiceDueDate if you need the due date column.
                           Default range: use year-start to today (both provided in context as TODAY and YEAR_START).
+                          OVERDUE SEARCH: If the task mentions an overdue, unpaid, or late invoice and the
+                            current-year search returns zero results, immediately retry with a wider range:
+                            invoiceDateFrom: HISTORY_START (provided in context, 3 years back)
+                            invoiceDateTo: TODAY
+                            Never give up after a single empty GET /invoice — try the wider range first.
   POST /invoice           body: {invoiceDate:"YYYY-MM-DD", invoiceDueDate:"YYYY-MM-DD",
                                   customer:{id:X}, orders:[{id:Y}]}
                           — Only ONE order id per invoice is supported; put all lines on that order first.
@@ -154,6 +159,27 @@ Rules:
 ### Payments
   POST /invoice/{id}/payment  body: {paymentDate:"YYYY-MM-DD", paymentTypeId:2,
                                       amount:X, currency:{id:1}}
+
+### Reminder fees / overdue invoice handling
+  When the task asks to "post a reminder fee", "purregebyr", "inkassogebyr", or any late fee
+  on an overdue invoice:
+  Step 1: GET /invoice (wide date range: HISTORY_START to TODAY) — find the overdue invoice id
+  Step 2: GET /ledger/account (fields:"id,number,name", count:200)
+            — locate account 1500 (kundefordringer / accounts receivable) and the reminder fee income account
+  Step 3: GET /ledger/vatType — find VAT type id for 0% (reminder fees are VAT-exempt)
+  Step 4: GET /ledger/voucherType — get a voucher type id
+  Step 5: POST /ledger/voucher with two postings:
+            body: {
+              description: "Purregebyr",
+              date: "YYYY-MM-DD",
+              voucherType: {id: X},
+              postings: [
+                {account:{id:<1500-account-id>}, amountCurrency: 70, vatType:{id:<0%-vat-id>}},
+                {account:{id:<reminder-income-account-id>}, amountCurrency: -70, vatType:{id:<0%-vat-id>}}
+              ]
+            }
+  NOTE: Do NOT attempt to add a reminder fee via POST /invoice or order lines.
+        Use ledger/voucher as shown above.
 
 ### Credit notes
   POST /invoice/{id}/createCreditNote  body: {date:"YYYY-MM-DD"}
@@ -342,7 +368,10 @@ Rules:
 18. postings in POST/PUT /ledger/voucher must **never** include a "row" field.
     Row 0 is system-generated; any posting with row=0 (or row omitted but defaulting to 0) causes
     «Posteringene på rad 0 er systemgenererte». Strip "row" from every posting object.
-"""
+19. For tasks about overdue/unpaid/late invoices: ALWAYS search invoices with HISTORY_START (3 years
+    back) as invoiceDateFrom, not just YEAR_START. If the first GET /invoice returns zero results,
+    immediately retry with invoiceDateFrom=HISTORY_START before giving up.
+    NEVER output done after a single empty invoice search without trying the wider date range."""
 
 
 # ── LLM backends ─────────────────────────────────────────────────────────────
@@ -733,6 +762,7 @@ def solve(
 
     today = date.today().isoformat()
     year_start = f"{date.today().year}-01-01"
+    history_start = f"{date.today().year - 3}-01-01"
 
     # Try a deterministic handler before falling back to the LLM agent loop
     if not files and try_handle_deterministically(prompt, client, today, year_start):
@@ -741,7 +771,7 @@ def solve(
 
     # Build initial user message
     user_message_parts = [
-        f"TODAY: {today}\nYEAR_START: {year_start}",
+        f"TODAY: {today}\nYEAR_START: {year_start}\nHISTORY_START: {history_start}",
         "TASK:\n" + prompt,
     ]
     if file_context:
