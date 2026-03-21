@@ -179,18 +179,18 @@ Rules:
   DELETE /travelExpense/{id}
 
 ### Projects
-  POST /project           body: {name:"...", customer:{id:X}, startDate:"YYYY-MM-DD"}
-  GET  /project           params: {fields:"id,name,version,projectType", count:10}
+  POST /project           body: {name:"...", customer:{id:X}, startDate:"YYYY-MM-DD",
+                                  projectManager:{id:Y}}
+                          — **projectManager is REQUIRED** (422 "Feltet «Prosjektleder» må fylles ut" if missing).
+                            Always GET /employee first to find an employee id, then use that as projectManager.
+  GET  /project           params: {fields:"id,name,version", count:10}
   PUT  /project/{id}      body: {version:N, name:"...", ...}  ← version is REQUIRED for all PUTs
                           Always GET the resource first to obtain its current version number.
-  NOTE: **fixedPrice** is NOT a field on ProjectDTO — 422 if you try to set it.
-        To set a fixed price / budget on a project:
-        a) GET /project/projectType to see available project types (some allow fixed price).
-        b) Set a project budget via PUT /project/{id} with `budget:{id:..., budgetType:"FIXED_PRICE", ...}`
-           if budget endpoint is available, or simply note that the API may not support this directly.
-        c) As a fallback: create an order line on an order linked to this project with the fixed price amount.
-        d) If no budget/fixed-price endpoint is available: document the limitation in the "done" reasoning
-           and do NOT keep trying `fixedPrice` on POST/PUT /project (it will always fail).
+  NOTE: Neither **fixedPrice** nor **budget** are fields on ProjectDTO — 422 if you try to set them.
+        Fixed-price project tasks: create an order line (POST /order/orderline) linked to the project's
+        order with the fixed price amount. If you cannot, document in reasoning and move on.
+  NOTE: GET /project/projectType does NOT exist (API treats "projectType" as numeric ID → 422).
+        Do not call that path.
 
 ### Activities (for timesheet entries)
   GET  /activity                    params: {fields:"id,name,isGeneral", count:100}
@@ -441,15 +441,19 @@ def _call_signature(action: dict[str, Any]) -> tuple[str, str, str, str]:
     return (method, path, p_s, j_s)
 
 
-def _strip_posting_rows(body: dict[str, Any] | None, path: str) -> dict[str, Any] | None:
-    """Remove 'row' from posting objects in /ledger/voucher calls.
-    Tripletex rejects row=0 (system-generated row) with 422."""
+def _assign_posting_rows(body: dict[str, Any] | None, path: str) -> dict[str, Any] | None:
+    """Assign 1-based row numbers to postings in /ledger/voucher calls.
+    Tripletex row 0 is system-generated; when row is missing the API defaults to 0 → 422.
+    We always override row to 1, 2, 3... regardless of what the LLM sent."""
     if body is None or "ledger/voucher" not in path:
         return body
     postings = body.get("postings")
     if isinstance(postings, list):
-        cleaned = [{k: v for k, v in p.items() if k != "row"} for p in postings if isinstance(p, dict)]
-        return {**body, "postings": cleaned}
+        renumbered = []
+        for i, p in enumerate(postings):
+            if isinstance(p, dict):
+                renumbered.append({**{k: v for k, v in p.items() if k != "row"}, "row": i + 1})
+        return {**body, "postings": renumbered}
     return body
 
 
@@ -466,7 +470,7 @@ def _execute_call(
     if not isinstance(body, dict):
         body = None
 
-    body = _strip_posting_rows(body, path)
+    body = _assign_posting_rows(body, path)
 
     if method == "GET":
         return client.get(path, params=params)
@@ -483,7 +487,15 @@ def _execute_call(
 # ── file handling ─────────────────────────────────────────────────────────────
 
 def _extract_pdf_text(raw: bytes) -> str:
-    """Extract text from PDF bytes using pypdf (lightweight, no network)."""
+    """Extract text from PDF bytes.
+
+    Strategy:
+    1. Try pypdf (fast, local, works on text-based PDFs).
+    2. If pypdf returns empty/very short text AND Gemini is available, use
+       Gemini Vision (gemini-2.0-flash) to OCR the first page as an image.
+       This handles scanned PDFs, receipts, and hand-written invoices.
+    """
+    text = ""
     try:
         from pypdf import PdfReader  # type: ignore
         import io
@@ -493,15 +505,99 @@ def _extract_pdf_text(raw: bytes) -> str:
             t = page.extract_text()
             if t:
                 parts.append(t)
-        return "\n".join(parts)[:3000]
+        text = "\n".join(parts)
     except Exception:
-        return "(PDF — could not extract text)"
+        pass
+
+    if len(text.strip()) >= 200:
+        return text[:3000]
+
+    # Fallback: send raw PDF bytes to Gemini Vision
+    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if key:
+        try:
+            from google import genai  # type: ignore
+            from google.genai import types  # type: ignore
+
+            client = genai.Client(api_key=key)
+            model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part(
+                                inline_data=types.Blob(mime_type="application/pdf", data=raw)
+                            ),
+                            types.Part(
+                                text=(
+                                    "Extract all text from this document. "
+                                    "Return ONLY the raw text, no commentary."
+                                )
+                            ),
+                        ],
+                    )
+                ],
+            )
+            extracted = resp.text or ""
+            if extracted.strip():
+                return extracted[:3000]
+        except Exception:
+            pass
+
+    return text[:3000] if text else "(PDF — could not extract text)"
+
+
+def _extract_image_text(raw: bytes, mime_type: str) -> str:
+    """Use Gemini Vision to read text/info from an image file."""
+    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        return "(image — no Gemini key for vision)"
+    try:
+        from google import genai  # type: ignore
+        from google.genai import types  # type: ignore
+
+        client = genai.Client(api_key=key)
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+        resp = client.models.generate_content(
+            model=model_name,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(
+                            inline_data=types.Blob(mime_type=mime_type, data=raw)
+                        ),
+                        types.Part(
+                            text=(
+                                "Describe this image and extract ALL text visible in it. "
+                                "Return ONLY the extracted/described content, no commentary."
+                            )
+                        ),
+                    ],
+                )
+            ],
+        )
+        return (resp.text or "")[:2000]
+    except Exception as e:
+        return f"(image — vision extraction failed: {e})"
 
 
 def _process_files(files: list[dict[str, str]], workdir: Path) -> str:
-    """Decode base64 files, extract text from PDFs, return context string."""
+    """Decode base64 files, extract text from PDFs/images, return context string."""
     workdir.mkdir(parents=True, exist_ok=True)
     context_parts: list[str] = []
+
+    _IMAGE_MIME: dict[str, str] = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+    }
+
     for f in files:
         name = f.get("filename") or "attachment.bin"
         content_b64 = f.get("content_base64") or ""
@@ -522,6 +618,10 @@ def _process_files(files: list[dict[str, str]], workdir: Path) -> str:
                 context_parts.append(f"[File: {name}]\n{raw.decode('utf-8', errors='replace')[:2000]}")
             except Exception:
                 pass
+        elif ext in _IMAGE_MIME:
+            mime = _IMAGE_MIME[ext]
+            text = _extract_image_text(raw, mime)
+            context_parts.append(f"[File: {name}]\n{text}")
         else:
             context_parts.append(f"[File: {name} — binary, {len(raw)} bytes]")
     return "\n\n".join(context_parts)
