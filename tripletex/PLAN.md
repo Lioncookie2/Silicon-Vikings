@@ -59,16 +59,66 @@ jsonPayload.path="/invoice"
 jsonPayload.message!=""
 ```
 
-### gcloud (kun agent-hendelser, siste time)
+### gcloud — hent logger (lange `jsonPayload.message`)
+
+Bytt `PROJECT_ID` hvis ditt prosjekt er annerledes.
+
+**Kun agent-linjer (filtrerer bort tomme Uvicorn-rader), siste time:**
+
+```bash
+export PROJECT_ID=ai-nm26osl-1867
+
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="tripletex-agent" AND jsonPayload.message!=""' \
+  --project "$PROJECT_ID" \
+  --freshness=1h \
+  --limit 100 \
+  --format="value(jsonPayload.message)"
+```
+
+**Med tidsstempel (lettere å se rekkefølge):**
 
 ```bash
 gcloud logging read \
   'resource.type="cloud_run_revision" AND resource.labels.service_name="tripletex-agent" AND jsonPayload.message!=""' \
-  --project YOUR_PROJECT_ID \
+  --project "$PROJECT_ID" \
   --freshness=1h \
-  --limit 80 \
+  --limit 100 \
+  --format="table(timestamp,jsonPayload.message)"
+```
+
+**Én konkret `/solve`-request (lim inn full `request_id` fra en logglinje):**
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="tripletex-agent" AND jsonPayload.request_id="PASTE-FULL-UUID-HERE"' \
+  --project "$PROJECT_ID" \
+  --freshness=24h \
+  --limit 200 \
   --format="value(jsonPayload.message)"
 ```
+
+**Full JSON per oppføring (hvis du vil se alle felter, ikke bare `message`):**
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="tripletex-agent" AND jsonPayload.message!=""' \
+  --project "$PROJECT_ID" \
+  --freshness=1h \
+  --limit 20 \
+  --format=json
+```
+
+**Alternativ (enkelt, men blander med Uvicorn):**
+
+```bash
+gcloud run services logs read tripletex-agent \
+  --region europe-north1 \
+  --project "$PROJECT_ID" \
+  --limit 200
+```
+
+> **Merk:** De «lange» meldingene krever at Cloud Run kjører **siste deploy** der `structured_log.py` bygger rik `message` (step, path, status, detail). Etter `git pull` → build → deploy.
 
 Se [TASK_COVERAGE.md](TASK_COVERAGE.md) for sjekkliste over støttede oppgavetyper.
 
