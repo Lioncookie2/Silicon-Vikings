@@ -102,7 +102,27 @@ Rules:
 
 ### Projects
   POST /project           body: {name:"...", customer:{id:X}, startDate:"YYYY-MM-DD"}
-  GET  /project           params: {fields:"id,name", count:10}
+  GET  /project           params: {fields:"id,name,version", count:10}
+  PUT  /project/{id}      body: {version:N, name:"...", ...}  ← version is REQUIRED for all PUTs
+                          Always GET the resource first to obtain its current version number.
+
+### Activities (for timesheet entries)
+  GET  /activity                    params: {fields:"id,name,isGeneral", count:100}
+                                    — list all available activities
+  GET  /activity/>forTimeSheet      params: {projectId:X, employeeId:Y, date:"YYYY-MM-DD",
+                                             fields:"id,name"}
+                                    — find valid activities for a specific project/employee/date
+  NOTE: /timesheet/activity does NOT exist — always use /activity
+
+### Timesheet entries (hours worked)
+  GET  /timesheet/entry             params: {dateFrom:"YYYY-MM-DD", dateTo:"YYYY-MM-DD",
+                                             employeeId:X, fields:"id,date,hours,activity,project"}
+                                    NOTE: dateFrom AND dateTo are REQUIRED
+  POST /timesheet/entry             body: {date:"YYYY-MM-DD", hours:7.5,
+                                           employee:{id:X}, project:{id:Y}, activity:{id:Z},
+                                           comment:"optional"}
+                                    — activity ID must come from GET /activity first
+  PUT  /timesheet/entry/{id}        body: {version:N, date:"...", hours:N, ...}
 
 ### Departments
   POST /department        body: {name:"...", departmentNumber:"..."}
@@ -157,6 +177,9 @@ Rules:
 10. NEVER output {"action":"done"} at step 0 without making at least one API call.
     If you are unsure how to proceed, start by fetching the relevant entity (e.g. GET /employee).
     Always attempt the task — do not refuse based on assumed API limitations.
+11. For ALL PUT requests: first GET the resource to obtain its current "version" number.
+    Include version in the PUT body: {"version": N, ...other fields...}
+    Without version, Tripletex returns 422.
 """
 
 
@@ -418,6 +441,16 @@ def solve(
                 f"API ERROR {status}:\n{resp_summary}\n"
                 "Read the error message carefully and fix the request."
             )
+            # Also detect loops on error responses (e.g. repeated 404s)
+            call_key = (action.get("method", "GET").upper(), action.get("path", ""))
+            recent_calls.append(call_key)
+            if len(recent_calls) >= 3 and len(set(recent_calls[-3:])) == 1:
+                print(f"[step {step}] error loop detected — same failing endpoint called 3+ times")
+                feedback += (
+                    "\n\nWARNING: You have called this exact endpoint 3 times in a row and it keeps failing. "
+                    "This endpoint does NOT exist or you are using the wrong path. "
+                    "Stop trying it. Use a different endpoint or output {\"action\":\"done\"}."
+                )
         else:
             feedback = f"API SUCCESS {status}:\n{resp_summary}"
             # Track successful calls for loop detection
