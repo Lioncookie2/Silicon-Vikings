@@ -94,8 +94,13 @@ Rules:
 
 ### Orders
   POST /order             body: {customer:{id:X}, orderDate:"YYYY-MM-DD", deliveryDate:"YYYY-MM-DD"}
-  POST /order/orderline   body: {order:{id:Y}, product:{id:X}, count:N, unitPriceExcludingVatCurrency:N}
+  POST /order/orderline   body: {order:{id:Y}, product:{id:X}, count:1,
+                                 unitPriceExcludingVatCurrency:N, vatType:{id:Z}}
+                          — vatType per line when the task specifies different VAT % per product line.
+                            Resolve Z via GET /ledger/vatType (match percentage: 25, 15, 0).
                           NOTE: /order/{id}/orderline does NOT exist (404). Use /order/orderline.
+  GET  /product           params: {number:"7733", fields:"id,name,number,vatType", count:10}
+                          — filter by product number to avoid repeating generic GET /product.
 
 ### Invoices
   GET  /invoice           params: {invoiceDateFrom:"YYYY-MM-DD", invoiceDateTo:"YYYY-MM-DD",
@@ -105,6 +110,9 @@ Rules:
                           Default range: use year-start to today (both provided in context as TODAY and YEAR_START).
   POST /invoice           body: {invoiceDate:"YYYY-MM-DD", invoiceDueDate:"YYYY-MM-DD",
                                   customer:{id:X}, orders:[{id:Y}]}
+                          — Only ONE order id per invoice is supported; put all lines on that order first.
+  GET  /invoice/paymentType  params: {fields:"id,description", count:20}
+                          — if POST /invoice returns 422 about payment/bank, fetch valid payment types first.
   PUT  /invoice/{id}/send     — send invoice by email (no request body needed)
 
 ### Payments
@@ -267,6 +275,9 @@ Rules:
 13. Tasks about reviewing or fixing the general ledger (hovedbok, bilag, posteringsfeil):
     Search with GET /ledger/posting and GET /ledger/voucher using dateFrom/dateTo from the task period.
     Do NOT create new vouchers with POST until you have identified what to fix.
+14. On POST /invoice → 422: read validationMessages in the API response body exactly — do NOT invent reasons
+    (e.g. "bank account") unless the error text says so. Retry with corrected fields, vatType on order lines,
+    or GET /invoice/paymentType if payment-related.
 """
 
 
