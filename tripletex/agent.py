@@ -71,8 +71,18 @@ Rules:
   PUT  /customer/{id}     body: partial update
 
 ### Products
-  POST /product           body: {name, number(optional), costExcludingVatCurrency, priceExcludingVatCurrency}
-  GET  /product           params: {fields:"id,name,number", count:10}
+  POST /product           body: {name, number(optional), costExcludingVatCurrency,
+                                  priceExcludingVatCurrency, vatType:{id:X}}
+                          — vatType is optional but use it when a specific VAT rate is mentioned.
+                            Look up the correct vatType ID first with GET /ledger/vatType.
+  GET  /product           params: {fields:"id,name,number,priceExcludingVatCurrency,vatType", count:10}
+  PUT  /product/{id}      body: {version:N, ...fields to update...}
+
+### VAT types
+  GET  /ledger/vatType    params: {fields:"id,name,number,percentage", count:50}
+                          — returns all available VAT types. Match by percentage or name.
+                            Common Norwegian rates: 25% (standard), 15% (food/mat), 12% (transport/hotel), 0% (exempt)
+                          — always do this GET first when a task mentions a specific VAT rate (%)
 
 ### Orders
   POST /order             body: {customer:{id:X}, orderDate:"YYYY-MM-DD", deliveryDate:"YYYY-MM-DD"}
