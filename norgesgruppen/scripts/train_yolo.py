@@ -11,7 +11,14 @@ assert _spec and _spec.loader
 _tc_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_tc_mod)
 
+_nc = Path(__file__).resolve().parent / "numpy_compat.py"
+_spec_nc = importlib.util.spec_from_file_location("_numpy_compat_ng", _nc)
+assert _spec_nc and _spec_nc.loader
+_nc_mod = importlib.util.module_from_spec(_spec_nc)
+_spec_nc.loader.exec_module(_nc_mod)
+
 import torch
+
 from ultralytics import YOLO
 
 
@@ -31,6 +38,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--patience", type=int, default=20)
     p.add_argument("--batch", type=int, default=-1, help="-1 = auto batch size.")
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=-1,
+        help="DataLoader workers (-1 = Ultralytics default, 0 = ofte mer stabilt på Mac).",
+    )
     p.add_argument("--name", type=str, default="baseline", help="Run name under runs/ngd_yolo/.")
     # Augmentation (upgrade path)
     p.add_argument("--mosaic", type=float, default=1.0, help="Mosaic augmentation probability (0-1).")
@@ -57,7 +70,12 @@ def main() -> None:
         else:
             raise FileNotFoundError(f"Weights not found: {args.weights} (also tried {alt})")
 
-    device = "0" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "0"
+    elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        device = "mps"  # Apple Silicon — ofte mye raskere enn CPU
+    else:
+        device = "cpu"
     model = YOLO(str(weights_path))
 
     common_args: dict = {
@@ -74,6 +92,9 @@ def main() -> None:
         "mixup": args.mixup,
         "copy_paste": args.copy_paste,
     }
+    w = int(args.workers)
+    if w >= 0:
+        common_args["workers"] = w
 
     batch = int(args.batch)
     try:
@@ -83,12 +104,22 @@ def main() -> None:
         else:
             model.train(batch=batch, **common_args)
     except Exception as exc:
-        print(f"Training failed ({exc}). Falling back to batch=8.")
-        model.train(batch=8, **common_args)
+        err = str(exc).lower()
+        # Unngå «oom» som delstreng (falske treff); kun tydelige OOM-meldinger.
+        is_oom = (
+            "out of memory" in err
+            or "mps backend out of memory" in err
+            or "cuda out of memory" in err
+        )
+        if is_oom:
+            print(f"Ser ut som minne-feil ({exc}). Prøver batch=4 …")
+            model.train(batch=4, **common_args)
+        else:
+            raise
 
-    print(
-        f"Training finished. Best weights: runs/ngd_yolo/{args.name}/weights/best.pt"
-    )
+    run_dir = project_root / "runs" / "ngd_yolo" / args.name
+    print(f"Training finished. Best weights: {run_dir / 'weights' / 'best.pt'}")
+    print(f"Se også: norgesgruppen/TRAINING_OUTPUTS.md (metrics, plots, results.csv).")
 
 
 if __name__ == "__main__":

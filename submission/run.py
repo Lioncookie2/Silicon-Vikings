@@ -32,8 +32,16 @@ def parse_image_id(image_path: Path) -> int:
 
 
 def iter_images(folder: Path) -> list[Path]:
-    allowed = {".jpg", ".jpeg", ".png", ".bmp"}
+    allowed = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
     return sorted([p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in allowed])
+
+
+def pick_device() -> str:
+    if torch.cuda.is_available():
+        return "0"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def main() -> None:
@@ -46,6 +54,14 @@ def main() -> None:
         "--tta",
         action="store_true",
         help="Enable test-time augmentation (slower, may improve mAP).",
+    )
+    parser.add_argument(
+        "--detect-only",
+        action="store_true",
+        help=(
+            "Set category_id=0 for every box (detection-only; scores at most ~70%% of hybrid metric). "
+            "Default: use model class ids for full detection + classification scoring."
+        ),
     )
     args = parser.parse_args()
 
@@ -67,7 +83,7 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image_files = iter_images(input_dir)
 
-    device = "0" if torch.cuda.is_available() else "cpu"
+    device = pick_device()
     model = YOLO(str(model_path))
 
     output_rows: list[dict] = []
@@ -91,11 +107,12 @@ def main() -> None:
             x1, y1, x2, y2 = boxes.xyxy[i].tolist()
             w = max(0.0, x2 - x1)
             h = max(0.0, y2 - y1)
+            cls_id = 0 if args.detect_only else int(boxes.cls[i].item())
 
             output_rows.append(
                 {
                     "image_id": int(image_id),
-                    "category_id": int(boxes.cls[i].item()),
+                    "category_id": int(cls_id),
                     "bbox": [float(x1), float(y1), float(w), float(h)],
                     "score": float(boxes.conf[i].item()),
                 }

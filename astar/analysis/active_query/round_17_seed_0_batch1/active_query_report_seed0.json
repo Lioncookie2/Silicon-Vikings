@@ -1,0 +1,201 @@
+{
+  "round_id": "3eb0c25d-28fa-48ca-b8e1-fc249e3918e9",
+  "seed_index": 0,
+  "budget": 10,
+  "batch_sizes": [
+    10
+  ],
+  "dry_run": false,
+  "model_path": "/Users/milestech/Nm i ai/Silicon-Vikings/astar/data/models/gradient_boosting.joblib",
+  "load_source": "/Users/milestech/Nm i ai/Silicon-Vikings/astar/data/models/gradient_boosting.joblib",
+  "feature_set": "settlement_port_radius",
+  "batches": [
+    {
+      "batch_index": 0,
+      "phase": 1,
+      "n_queries": 10,
+      "mean_entropy_before": 0.4179806836052605,
+      "mean_entropy_after": 0.5415826220305068,
+      "viewports": [
+        {
+          "x": 10,
+          "y": 28,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 22,
+          "y": 9,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 18,
+          "y": 0,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 0,
+          "y": 15,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 2,
+          "y": 26,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 12,
+          "y": 9,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 26,
+          "y": 0,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 20,
+          "y": 28,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 28,
+          "y": 20,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 0,
+          "y": 5,
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "simulate_meta": [
+        {
+          "viewport": {
+            "x": 10,
+            "y": 28,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 11,
+          "queries_max": 50,
+          "cells_updated": 50
+        },
+        {
+          "viewport": {
+            "x": 22,
+            "y": 9,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 12,
+          "queries_max": 50,
+          "cells_updated": 26
+        },
+        {
+          "viewport": {
+            "x": 18,
+            "y": 0,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 13,
+          "queries_max": 50,
+          "cells_updated": 78
+        },
+        {
+          "viewport": {
+            "x": 0,
+            "y": 15,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 14,
+          "queries_max": 50,
+          "cells_updated": 41
+        },
+        {
+          "viewport": {
+            "x": 2,
+            "y": 26,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 15,
+          "queries_max": 50,
+          "cells_updated": 58
+        },
+        {
+          "viewport": {
+            "x": 12,
+            "y": 9,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 16,
+          "queries_max": 50,
+          "cells_updated": 64
+        },
+        {
+          "viewport": {
+            "x": 26,
+            "y": 0,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 17,
+          "queries_max": 50,
+          "cells_updated": 69
+        },
+        {
+          "viewport": {
+            "x": 20,
+            "y": 28,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 18,
+          "queries_max": 50,
+          "cells_updated": 55
+        },
+        {
+          "viewport": {
+            "x": 28,
+            "y": 20,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 19,
+          "queries_max": 50,
+          "cells_updated": 78
+        },
+        {
+          "viewport": {
+            "x": 0,
+            "y": 5,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 20,
+          "queries_max": 50,
+          "cells_updated": 53
+        }
+      ],
+      "explore_update": {
+        "queries_in_batch": 10,
+        "total_cells_updated": 572
+      }
+    }
+  ],
+  "final_prediction_path": "astar/analysis/active_query/round_17_seed_0_batch1/prediction_seed0_final.json",
+  "completed_at": "2026-03-21T19:19:48.332272+00:00"
+}

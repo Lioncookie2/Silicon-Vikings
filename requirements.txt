@@ -2,5 +2,7 @@ ultralytics==8.1.0
 torch==2.6.0
 torchvision==0.21.0
 pillow
-numpy
+# NumPy 2.x + ultralytics 8.1.0 krever trapz-shim; 1.26.x er enklest. OpenCV 4.12+ krever ofte numpy>=2 — pin 4.9 som i sandbox.
+numpy>=1.26.4,<2
+opencv-python-headless==4.9.0.80
 ensemble-boxes>=1.0.9

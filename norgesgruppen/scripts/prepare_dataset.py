@@ -13,13 +13,40 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def resolve_images_dir(raw_dir: Path) -> Path:
-    """Training images live under train_images/ or train_images/images/."""
-    direct = raw_dir / "train_images"
-    nested = direct / "images"
-    if nested.is_dir() and any(nested.iterdir()):
-        return nested
-    return direct
+def resolve_source_image(raw_dir: Path, file_name: str) -> Path | None:
+    """
+    Finn kildebilde for COCO file_name under data/raw.
+
+    Støtter bl.a.:
+    - data/raw/<file_name>
+    - data/raw/product_images/<file_name> eller bare basename
+    - data/raw/product_images/train_images/<file_name>
+    - data/raw/train_images/<file_name> og train_images/images/<basename>
+    """
+    fn = file_name.replace("\\", "/").lstrip("/")
+    name_only = Path(fn).name
+
+    candidates: list[Path] = [
+        raw_dir / fn,
+        raw_dir / "product_images" / fn,
+        raw_dir / "product_images" / name_only,
+        raw_dir / "product_images" / "train_images" / fn,
+        raw_dir / "product_images" / "train_images" / name_only,
+        raw_dir / "train_images" / fn,
+        raw_dir / "train_images" / name_only,
+        raw_dir / "train_images" / "images" / name_only,
+        raw_dir / "product_images" / "images" / name_only,
+    ]
+
+    seen: set[str] = set()
+    for c in candidates:
+        key = str(c.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        if c.is_file():
+            return c
+    return None
 
 
 def coco_bbox_to_yolo(
@@ -63,7 +90,6 @@ def main() -> None:
 
     project_root = repo_root()
     raw_dir = project_root / "data" / "raw"
-    images_dir = resolve_images_dir(raw_dir)
     annotations_path = raw_dir / "annotations.json"
     yolo_root = project_root / "data" / "yolo"
 
@@ -81,7 +107,9 @@ def main() -> None:
         folder.mkdir(parents=True, exist_ok=True)
 
     print(f"Reading annotations: {annotations_path}")
-    print(f"Source images directory: {images_dir}")
+    print(
+        "Søker bilder under data/raw (product_images/, train_images/, relative file_name, …)"
+    )
     with annotations_path.open("r", encoding="utf-8") as f:
         coco = json.load(f)
 
@@ -113,16 +141,19 @@ def main() -> None:
         width = int(img["width"])
         height = int(img["height"])
 
-        src_img = images_dir / file_name
-        if not src_img.exists():
+        src_img = resolve_source_image(raw_dir, file_name)
+        if src_img is None:
             continue
 
+        # Alltid flate filnavn i YOLO-mappa (unngå undermapper fra COCO-stier)
+        out_name = Path(file_name).name
+
         split = "train" if img_id in train_ids else "val"
-        dst_img = yolo_images_train / file_name if split == "train" else yolo_images_val / file_name
+        dst_img = yolo_images_train / out_name if split == "train" else yolo_images_val / out_name
         dst_label = (
-            yolo_labels_train / f"{Path(file_name).stem}.txt"
+            yolo_labels_train / f"{Path(out_name).stem}.txt"
             if split == "train"
-            else yolo_labels_val / f"{Path(file_name).stem}.txt"
+            else yolo_labels_val / f"{Path(out_name).stem}.txt"
         )
 
         shutil.copy2(src_img, dst_img)

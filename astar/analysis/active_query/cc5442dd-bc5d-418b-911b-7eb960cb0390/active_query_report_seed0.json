@@ -1,0 +1,543 @@
+{
+  "round_id": "cc5442dd-bc5d-418b-911b-7eb960cb0390",
+  "seed_index": 0,
+  "budget": 30,
+  "batch_sizes": [
+    10,
+    10,
+    10
+  ],
+  "dry_run": true,
+  "model_path": "/Users/milestech/Nm i ai/Silicon-Vikings/astar/data/models/gradient_boosting.joblib",
+  "load_source": "/Users/milestech/Nm i ai/Silicon-Vikings/astar/data/models/gradient_boosting.joblib",
+  "feature_set": "settlement_port_radius",
+  "batches": [
+    {
+      "batch_index": 0,
+      "phase": 1,
+      "n_queries": 10,
+      "mean_entropy_before": 0.40663663280441736,
+      "mean_entropy_after": 0.40663663280441736,
+      "viewports": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 5,
+          "y": 3,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 0,
+          "y": 10,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 20,
+          "y": 17,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 13,
+          "y": 16,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 18,
+          "y": 11,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 4,
+          "y": 15,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 24,
+          "y": 28,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 16,
+          "y": 22,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 15,
+          "y": 0,
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "simulate_meta": [
+        {
+          "viewport": {
+            "x": 0,
+            "y": 0,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 5,
+            "y": 3,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 0,
+            "y": 10,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 20,
+            "y": 17,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 13,
+            "y": 16,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 18,
+            "y": 11,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 4,
+            "y": 15,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 24,
+            "y": 28,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 16,
+            "y": 22,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 15,
+            "y": 0,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        }
+      ],
+      "explore_update": {
+        "queries_in_batch": 10,
+        "total_cells_updated": 0
+      }
+    },
+    {
+      "batch_index": 1,
+      "phase": 2,
+      "n_queries": 10,
+      "mean_entropy_before": 0.40663663280441736,
+      "mean_entropy_after": 0.40663663280441736,
+      "viewports": [
+        {
+          "x": 0,
+          "y": 23,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 4,
+          "y": 26,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 24,
+          "y": 2,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 28,
+          "y": 8,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 24,
+          "y": 14,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 11,
+          "y": 24,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 22,
+          "y": 8,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 6,
+          "y": 21,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 10,
+          "y": 12,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 27,
+          "y": 24,
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "simulate_meta": [
+        {
+          "viewport": {
+            "x": 0,
+            "y": 23,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 4,
+            "y": 26,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 24,
+            "y": 2,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 28,
+            "y": 8,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 24,
+            "y": 14,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 11,
+            "y": 24,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 22,
+            "y": 8,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 6,
+            "y": 21,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 10,
+            "y": 12,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 27,
+            "y": 24,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        }
+      ],
+      "explore_update": {
+        "queries_in_batch": 10,
+        "total_cells_updated": 0
+      }
+    },
+    {
+      "batch_index": 2,
+      "phase": 3,
+      "n_queries": 10,
+      "mean_entropy_before": 0.40663663280441736,
+      "mean_entropy_after": 0.40663663280441736,
+      "viewports": [
+        {
+          "x": 9,
+          "y": 0,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 14,
+          "y": 6,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 21,
+          "y": 24,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 14,
+          "y": 28,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 28,
+          "y": 18,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 19,
+          "y": 4,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 6,
+          "y": 9,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 21,
+          "y": 0,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 0,
+          "y": 28,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 24,
+          "y": 19,
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "simulate_meta": [
+        {
+          "viewport": {
+            "x": 9,
+            "y": 0,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 14,
+            "y": 6,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 21,
+            "y": 24,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 14,
+            "y": 28,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 28,
+            "y": 18,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 19,
+            "y": 4,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 6,
+            "y": 9,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 21,
+            "y": 0,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 0,
+            "y": 28,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        },
+        {
+          "viewport": {
+            "x": 24,
+            "y": 19,
+            "w": 12,
+            "h": 12
+          },
+          "dry_run": true,
+          "cells_updated": 0
+        }
+      ],
+      "explore_update": {
+        "queries_in_batch": 10,
+        "total_cells_updated": 0
+      }
+    }
+  ],
+  "final_prediction_path": "/Users/milestech/Nm i ai/Silicon-Vikings/astar/analysis/active_query/cc5442dd-bc5d-418b-911b-7eb960cb0390/prediction_seed0_final.json",
+  "completed_at": "2026-03-21T19:11:35.576848+00:00"
+}

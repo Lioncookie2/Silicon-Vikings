@@ -1,0 +1,128 @@
+{
+  "generated_at": "2026-03-21T19:33:25.395319+00:00",
+  "round_id": "3eb0c25d-28fa-48ca-b8e1-fc249e3918e9",
+  "round_number_arg": 17,
+  "seeds": [
+    {
+      "seed": 0,
+      "report_dir": "astar/analysis/active_query/round_17_seed_0_batch1",
+      "queries_used": 10,
+      "cells_updated_simulate": 572,
+      "mean_entropy_before": 0.4179806836052605,
+      "mean_entropy_after": 0.5415826220305068,
+      "delta_mean_entropy": 0.1236019384252463,
+      "mean_l1_change": 0.4198374514381885,
+      "cells_large_change": 464,
+      "cells_large_change_l1_gt": 464,
+      "frac_cells_large_change": 0.29,
+      "large_l1_threshold": 0.2,
+      "after_prediction_file": "astar/analysis/active_query/round_17_seed_0_batch1/prediction_final_seed0_after_batch1.json",
+      "after_prediction_note": "Identisk innhold som prediction_seed0_final.json fra active_query_runner (merged grid ble ikke lagret; reproduksjon av etter-prediksjon krever simulate-replay).",
+      "ranking_score": 1.750269545394941
+    },
+    {
+      "seed": 1,
+      "report_dir": "astar/analysis/active_query/round_17_seed_1_batch1",
+      "queries_used": 5,
+      "cells_updated_simulate": 259,
+      "mean_entropy_before": 0.42600932764046734,
+      "mean_entropy_after": 0.47765470750393696,
+      "delta_mean_entropy": 0.05164537986346962,
+      "mean_l1_change": 0.20127746504206775,
+      "cells_large_change": 226,
+      "cells_large_change_l1_gt": 226,
+      "frac_cells_large_change": 0.14125,
+      "large_l1_threshold": 0.2,
+      "after_prediction_file": "astar/analysis/active_query/round_17_seed_1_batch1/prediction_final_seed1_after_batch1.json",
+      "after_prediction_note": "Identisk innhold som prediction_seed1_final.json fra active_query_runner (merged grid ble ikke lagret; reproduksjon av etter-prediksjon krever simulate-replay).",
+      "ranking_score": -0.2926022996486187
+    },
+    {
+      "seed": 2,
+      "report_dir": "astar/analysis/active_query/round_17_seed_2_batch1",
+      "queries_used": 5,
+      "cells_updated_simulate": 210,
+      "mean_entropy_before": 0.4264863070838317,
+      "mean_entropy_after": 0.47149381574341837,
+      "delta_mean_entropy": 0.04500750865958669,
+      "mean_l1_change": 0.1641013131083269,
+      "cells_large_change": 187,
+      "cells_large_change_l1_gt": 187,
+      "frac_cells_large_change": 0.116875,
+      "large_l1_threshold": 0.2,
+      "after_prediction_file": "astar/analysis/active_query/round_17_seed_2_batch1/prediction_final_seed2_after_batch1.json",
+      "after_prediction_note": "Identisk innhold som prediction_seed2_final.json fra active_query_runner (merged grid ble ikke lagret; reproduksjon av etter-prediksjon krever simulate-replay).",
+      "ranking_score": -0.9590430447969329
+    },
+    {
+      "seed": 3,
+      "report_dir": "astar/analysis/active_query/round_17_seed_3_batch1",
+      "queries_used": 5,
+      "cells_updated_simulate": 248,
+      "mean_entropy_before": 0.4245898786158861,
+      "mean_entropy_after": 0.47925047037717433,
+      "delta_mean_entropy": 0.054660591761288235,
+      "mean_l1_change": 0.1842785411257881,
+      "cells_large_change": 195,
+      "cells_large_change_l1_gt": 195,
+      "frac_cells_large_change": 0.121875,
+      "large_l1_threshold": 0.2,
+      "after_prediction_file": "astar/analysis/active_query/round_17_seed_3_batch1/prediction_final_seed3_after_batch1.json",
+      "after_prediction_note": "Identisk innhold som prediction_seed3_final.json fra active_query_runner (merged grid ble ikke lagret; reproduksjon av etter-prediksjon krever simulate-replay).",
+      "ranking_score": -0.5196578549271135
+    },
+    {
+      "seed": 4,
+      "report_dir": "astar/analysis/active_query/round_17_seed_4_batch1",
+      "queries_used": 5,
+      "cells_updated_simulate": 236,
+      "mean_entropy_before": 0.41702121174177664,
+      "mean_entropy_after": 0.4873145898608317,
+      "delta_mean_entropy": 0.07029337811905506,
+      "mean_l1_change": 0.21084468302312043,
+      "cells_large_change": 248,
+      "cells_large_change_l1_gt": 248,
+      "frac_cells_large_change": 0.155,
+      "large_l1_threshold": 0.2,
+      "after_prediction_file": "astar/analysis/active_query/round_17_seed_4_batch1/prediction_final_seed4_after_batch1.json",
+      "after_prediction_note": "Identisk innhold som prediction_seed4_final.json fra active_query_runner (merged grid ble ikke lagret; reproduksjon av etter-prediksjon krever simulate-replay).",
+      "ranking_score": 0.02103365397772733
+    }
+  ],
+  "ranking": [
+    {
+      "rank": 1,
+      "seed": 0,
+      "ranking_score": 1.750269545394941
+    },
+    {
+      "rank": 2,
+      "seed": 4,
+      "ranking_score": 0.02103365397772733
+    },
+    {
+      "rank": 3,
+      "seed": 1,
+      "ranking_score": -0.2926022996486187
+    },
+    {
+      "rank": 4,
+      "seed": 3,
+      "ranking_score": -0.5196578549271135
+    },
+    {
+      "rank": 5,
+      "seed": 2,
+      "ranking_score": -0.9590430447969329
+    }
+  ],
+  "ranking_legend": "ranking_score = 0.45*z(entropy_after) + 0.35*z(mean_l1_change) + 0.20*z(mean_l1_per_query); høyere = mer prioritert for neste simulate-budsjett.",
+  "recommended_next_queries_20": {
+    "0": 8,
+    "1": 3,
+    "2": 2,
+    "3": 3,
+    "4": 4
+  },
+  "recommended_allocation_method": "minst 1 query per seed; resterende 15 fordelt proporsjonalt på max(0.05, ranking_score+1.2), største-rest-metode."
+}

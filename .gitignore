@@ -13,9 +13,18 @@ data/yolo/
 # Models & submissions (large / local)
 *.pt.bak
 submission_ng.zip
+submission.zip
 norgesgruppen/submission/best.pt
 norgesgruppen/submission/test_predictions.json
 norgesgruppen/submission/local_predictions.json
+
+# Secrets (Astar / API)
+.env
+
+# Astar local datasets / model artifacts
+astar/data/
+astar/analysis/explore/
+astar/analysis/plots/
 
 # OS
 .DS_Store

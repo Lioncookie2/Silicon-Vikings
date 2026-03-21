@@ -1,0 +1,116 @@
+{
+  "round_id": "3eb0c25d-28fa-48ca-b8e1-fc249e3918e9",
+  "seed_index": 3,
+  "budget": 5,
+  "batch_sizes": [
+    5
+  ],
+  "dry_run": false,
+  "model_path": "/Users/milestech/Nm i ai/Silicon-Vikings/astar/data/models/gradient_boosting.joblib",
+  "load_source": "/Users/milestech/Nm i ai/Silicon-Vikings/astar/data/models/gradient_boosting.joblib",
+  "feature_set": "settlement_port_radius",
+  "batches": [
+    {
+      "batch_index": 0,
+      "phase": 1,
+      "n_queries": 5,
+      "mean_entropy_before": 0.4245898786158861,
+      "mean_entropy_after": 0.47925047037717433,
+      "viewports": [
+        {
+          "x": 28,
+          "y": 13,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 15,
+          "y": 0,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 15,
+          "y": 14,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 18,
+          "y": 7,
+          "w": 12,
+          "h": 12
+        },
+        {
+          "x": 28,
+          "y": 23,
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "simulate_meta": [
+        {
+          "viewport": {
+            "x": 28,
+            "y": 13,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 31,
+          "queries_max": 50,
+          "cells_updated": 37
+        },
+        {
+          "viewport": {
+            "x": 15,
+            "y": 0,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 32,
+          "queries_max": 50,
+          "cells_updated": 41
+        },
+        {
+          "viewport": {
+            "x": 15,
+            "y": 14,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 33,
+          "queries_max": 50,
+          "cells_updated": 60
+        },
+        {
+          "viewport": {
+            "x": 18,
+            "y": 7,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 34,
+          "queries_max": 50,
+          "cells_updated": 64
+        },
+        {
+          "viewport": {
+            "x": 28,
+            "y": 23,
+            "w": 12,
+            "h": 12
+          },
+          "queries_used": 35,
+          "queries_max": 50,
+          "cells_updated": 46
+        }
+      ],
+      "explore_update": {
+        "queries_in_batch": 5,
+        "total_cells_updated": 248
+      }
+    }
+  ],
+  "final_prediction_path": "astar/analysis/active_query/round_17_seed_3_batch1/prediction_seed3_final.json",
+  "completed_at": "2026-03-21T19:28:20.754240+00:00"
+}

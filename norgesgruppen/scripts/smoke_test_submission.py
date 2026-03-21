@@ -16,12 +16,18 @@ def fail(message: str) -> None:
 
 def main() -> None:
     project_root = repo_root()
-    run_py = project_root / "norgesgruppen" / "submission" / "run.py"
+    sub_dir = project_root / "norgesgruppen" / "submission"
+    run_py = sub_dir / "run.py"
     input_dir = project_root / "data" / "yolo" / "images" / "val"
-    output_json = project_root / "norgesgruppen" / "submission" / "test_predictions.json"
+    output_json = sub_dir / "test_predictions.json"
 
     if not run_py.exists():
         fail(f"Fant ikke submission-script: {run_py}")
+    if not (sub_dir / "best.pt").exists() and not (sub_dir / "model.onnx").exists():
+        fail(
+            "Mangler vekt i norgesgruppen/submission/ (best.pt eller model.onnx). "
+            "Kopier etter trening, deretter kjør smoke test på nytt."
+        )
     if not input_dir.exists() or not input_dir.is_dir():
         fail(f"Fant ikke input-mappe: {input_dir}")
 
