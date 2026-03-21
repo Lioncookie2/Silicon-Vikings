@@ -46,6 +46,44 @@ def get_request_id() -> str | None:
     return _request_id_var.get()
 
 
+def _build_rich_message(
+    base: str,
+    rid: str | None,
+    payload: dict[str, Any],
+) -> str:
+    """One line for jsonPayload.message — works well with `gcloud logging read --format=value(jsonPayload.message)`."""
+    parts: list[str] = [base]
+    for key in (
+        "step",
+        "action",
+        "method",
+        "path",
+        "status",
+        "reasoning",
+        "prompt_len",
+        "file_count",
+        "max_steps",
+        "steps_used",
+    ):
+        if key in payload and payload[key] is not None:
+            val = payload[key]
+            s = str(val) if not isinstance(val, str) else val
+            if key == "reasoning" and len(s) > 200:
+                s = s[:200] + "…"
+            parts.append(f"{key}={s}")
+    tp = payload.get("task_preview")
+    if isinstance(tp, str) and tp.strip():
+        parts.append("task=" + tp.strip()[:160].replace("\n", " "))
+    if payload.get("detail"):
+        d = str(payload["detail"])
+        if len(d) > 500:
+            d = d[:500] + "…"
+        parts.append("detail=" + d.replace("\n", " | "))
+    if rid:
+        parts.append(f"rid={rid[:8]}…")
+    return " | ".join(str(p) for p in parts)
+
+
 def _sanitize(value: Any) -> Any:
     """Recursively remove sensitive keys and truncate long strings."""
     if isinstance(value, dict):
@@ -88,20 +126,11 @@ def log_event(
         if k.lower() not in _SENSITIVE_KEYS:
             payload[k] = _sanitize(v)
 
-    # Richer default `message` for Logs Explorer
-    if rid:
-        payload["message"] = f"{message} [rid={rid[:8]}…]"
+    # Single self-contained line for Logs Explorer / gcloud --format=value(jsonPayload.message)
+    payload["message"] = _build_rich_message(message, rid, payload)
 
     # Plain line on stderr so `gcloud run services logs read` always shows readable text
-    # (stdout JSON-only lines often appear as blank rows — content lives in jsonPayload).
-    parts = [payload["severity"], message]
-    if "step" in payload:
-        parts.append(f"step={payload['step']}")
-    if "path" in payload:
-        parts.append(str(payload["path"]))
-    if "status" in payload:
-        parts.append(str(payload["status"]))
-    print("[tripletex] " + " | ".join(str(p) for p in parts), file=sys.stderr, flush=True)
+    print("[tripletex] " + payload["message"], file=sys.stderr, flush=True)
 
     print(json.dumps(payload, default=str, ensure_ascii=False), flush=True)
 
