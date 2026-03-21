@@ -120,13 +120,29 @@ gcloud run services logs read tripletex-agent \
   --limit 200
 ```
 
-**Live tail (krever `beta`-sporet — installer med `gcloud components install beta` hvis den mangler):**
+**«Nesten live» uten ekstra pakker (anbefalt i Cloud Shell):** kjør på nytt etter hver test:
 
 ```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="tripletex-agent" AND jsonPayload.log_schema="v2-rich"' \
+  --project "$PROJECT_ID" \
+  --freshness=5m \
+  --limit 30 \
+  --format="value(jsonPayload.agent_log)"
+```
+
+**Live tail** (`gcloud beta run services logs tail …`) krever pakken `google-cloud-cli-log-streaming`.  
+I **Cloud Shell** er ofte `gcloud components install` skrudd av — bruk da **apt** i stedet, deretter tail:
+
+```bash
+sudo apt-get update && sudo apt-get install -y google-cloud-cli-log-streaming
+
 gcloud beta run services logs tail tripletex-agent \
   --region europe-north1 \
   --project "$PROJECT_ID"
 ```
+
+Hvis du ikke vil installere noe: bruk kommandoen over med `--freshness=5m`, eller kjør `gcloud run services logs read` i en loop manuelt.
 
 > **Merk:** Ser du fortsatt korte linjer som bare `api_call` uten `step=` / `path=` → du kjører **gammelt image**. Sjekk at logg har `jsonPayload.log_schema="v2-rich"` etter deploy. Prosess: `git pull` → `gcloud builds submit` → `gcloud run deploy`.
 
