@@ -51,12 +51,18 @@ def main() -> None:
 
     input_dir = Path(args.input)
     output_path = Path(args.output)
-    model_path = Path(__file__).resolve().parent / "best.pt"
+    submission_dir = Path(__file__).resolve().parent
+    onnx_path = submission_dir / "model.onnx"
+    pt_path = submission_dir / "best.pt"
 
     if not input_dir.exists() or not input_dir.is_dir():
         raise ValueError(f"Input directory does not exist: {input_dir}")
-    if not model_path.exists():
-        raise ValueError(f"Model file missing: {model_path}")
+    if onnx_path.exists():
+        model_path = onnx_path
+    elif pt_path.exists():
+        model_path = pt_path
+    else:
+        raise ValueError(f"Model file missing: expected {onnx_path.name} or {pt_path.name}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image_files = iter_images(input_dir)
