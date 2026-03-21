@@ -18,16 +18,19 @@ import base64
 import json
 import os
 import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import requests as _requests
 
+from .task_handlers import try_handle_deterministically
 from .tripletex_client import TripletexClient
 
 # ── constants ────────────────────────────────────────────────────────────────
-MAX_STEPS = 20          # hard cap — never loop forever
-RESPONSE_TRUNCATE = 800  # chars to include from each API response in conversation
+MAX_STEPS = 20              # hard cap — never loop forever
+RESPONSE_TRUNCATE_GET = 4000   # GET list responses can be large — agent needs to see all IDs
+RESPONSE_TRUNCATE_WRITE = 800  # POST/PUT/DELETE only return {value:{id:X}}, so 800 is fine
 
 # ── system prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert Tripletex v2 REST API agent for NM i AI 2026.
@@ -76,9 +79,14 @@ Rules:
   POST /order/{id}/orderline   body: {product:{id:X}, count:N, unitPriceExcludingVat:N}
 
 ### Invoices
+  GET  /invoice           params: {invoiceDateFrom:"YYYY-MM-DD", invoiceDateTo:"YYYY-MM-DD",
+                                    fields:"id,invoiceNumber,customer,amountCurrency,invoiceDate,dueDate",
+                                    count:100}
+                          NOTE: invoiceDateFrom AND invoiceDateTo are REQUIRED (400 without them).
+                          Default range: use year-start to today (both provided in context as TODAY and YEAR_START).
   POST /invoice           body: {invoiceDate:"YYYY-MM-DD", invoiceDueDate:"YYYY-MM-DD",
                                   customer:{id:X}, orders:[{id:Y}]}
-  PUT  /invoice/{id}/:send    — send invoice by email
+  PUT  /invoice/{id}/send     — send invoice by email (no request body needed)
 
 ### Payments
   POST /invoice/{id}/payment  body: {paymentDate:"YYYY-MM-DD", paymentTypeId:2,
@@ -120,6 +128,8 @@ Rules:
 6. Minimize write calls — every unnecessary POST/PUT/DELETE reduces your score.
 7. GET calls are free — use them to look up IDs or verify.
 8. When done, output {"action":"done","reasoning":"..."} — never loop unnecessarily.
+9. Never call the same endpoint more than twice in a row — you already have the data.
+   If you received a 200 response, extract the IDs from it and move to the next step.
 """
 
 
@@ -282,8 +292,19 @@ def solve(
     # Process attached files
     file_context = _process_files(files, workdir)
 
+    today = date.today().isoformat()
+    year_start = f"{date.today().year}-01-01"
+
+    # Try a deterministic handler before falling back to the LLM agent loop
+    if not files and try_handle_deterministically(prompt, client, today, year_start):
+        print("[agent] task handled deterministically — no LLM steps used")
+        return
+
     # Build initial user message
-    user_message_parts = ["TASK:\n" + prompt]
+    user_message_parts = [
+        f"TODAY: {today}\nYEAR_START: {year_start}",
+        "TASK:\n" + prompt,
+    ]
     if file_context:
         user_message_parts.append("ATTACHED FILES:\n" + file_context)
     user_message_parts.append(
@@ -300,6 +321,8 @@ def solve(
     ]
 
     print(f"[agent] starting agentic loop, max_steps={MAX_STEPS}")
+
+    recent_calls: list[tuple[str, str]] = []  # (method, path) of successful calls
 
     for step in range(MAX_STEPS):
         print(f"[step {step}] calling LLM ({len(messages)} messages in context)")
@@ -352,10 +375,14 @@ def solve(
         except Exception:
             body_text = resp.text
 
+        truncate_limit = (
+            RESPONSE_TRUNCATE_GET if action.get("method", "GET").upper() == "GET"
+            else RESPONSE_TRUNCATE_WRITE
+        )
         resp_summary = json.dumps({
             "status": status,
             "body": body_text,
-        }, ensure_ascii=False)[:RESPONSE_TRUNCATE]
+        }, ensure_ascii=False)[:truncate_limit]
 
         print(f"[step {step}] API {action.get('method','')} {action.get('path','')} → {status}")
 
@@ -366,6 +393,16 @@ def solve(
             )
         else:
             feedback = f"API SUCCESS {status}:\n{resp_summary}"
+            # Track successful calls for loop detection
+            call_key = (action.get("method", "GET").upper(), action.get("path", ""))
+            recent_calls.append(call_key)
+            if len(recent_calls) >= 3 and len(set(recent_calls[-3:])) == 1:
+                print(f"[step {step}] loop detected — same endpoint called 3+ times in a row")
+                feedback += (
+                    "\n\nWARNING: You have called this exact endpoint 3 times in a row with 200 responses. "
+                    "You already have all the data you need. Do NOT call it again. "
+                    "Proceed to the next action or output {\"action\":\"done\"} if the task is complete."
+                )
 
         messages.append({"role": "user", "content": feedback})
 
