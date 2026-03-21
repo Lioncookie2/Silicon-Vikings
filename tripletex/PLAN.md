@@ -69,22 +69,24 @@ Bytt `PROJECT_ID` hvis ditt prosjekt er annerledes.
 export PROJECT_ID=ai-nm26osl-1867
 
 gcloud logging read \
-  'resource.type="cloud_run_revision" AND resource.labels.service_name="tripletex-agent" AND jsonPayload.message!=""' \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="tripletex-agent" AND jsonPayload.log_schema="v2-rich"' \
   --project "$PROJECT_ID" \
   --freshness=1h \
   --limit 100 \
-  --format="value(jsonPayload.message)"
+  --format="value(jsonPayload.agent_log)"
 ```
+
+(`agent_log` er en kopi av den fulle tekstlinjen; bruk den hvis `message` ser kort ut i konsollen.)
 
 **Med tidsstempel (lettere å se rekkefølge):**
 
 ```bash
 gcloud logging read \
-  'resource.type="cloud_run_revision" AND resource.labels.service_name="tripletex-agent" AND jsonPayload.message!=""' \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="tripletex-agent" AND jsonPayload.log_schema="v2-rich"' \
   --project "$PROJECT_ID" \
   --freshness=1h \
   --limit 100 \
-  --format="table(timestamp,jsonPayload.message)"
+  --format="table(timestamp,jsonPayload.agent_log)"
 ```
 
 **Én konkret `/solve`-request (lim inn full `request_id` fra en logglinje):**
@@ -118,7 +120,7 @@ gcloud run services logs read tripletex-agent \
   --limit 200
 ```
 
-> **Merk:** De «lange» meldingene krever at Cloud Run kjører **siste deploy** der `structured_log.py` bygger rik `message` (step, path, status, detail). Etter `git pull` → build → deploy.
+> **Merk:** Ser du fortsatt korte linjer som bare `api_call` uten `step=` / `path=` → du kjører **gammelt image**. Sjekk at logg har `jsonPayload.log_schema="v2-rich"` etter deploy. Prosess: `git pull` → `gcloud builds submit` → `gcloud run deploy`.
 
 Se [TASK_COVERAGE.md](TASK_COVERAGE.md) for sjekkliste over støttede oppgavetyper.
 

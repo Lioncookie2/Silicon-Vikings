@@ -24,7 +24,7 @@ from typing import Any
 
 import requests as _requests
 
-from .structured_log import log_event, log_api_error
+from .structured_log import log_event, log_api_error, set_request_id
 from .task_handlers import try_handle_deterministically
 from .tripletex_client import TripletexClient
 
@@ -485,11 +485,15 @@ def solve(
     files: list[dict[str, str]],
     tripletex_credentials: dict[str, str],
     workdir: Path,
+    request_id: str | None = None,
 ) -> None:
     """
     Main entry point. Runs the agentic loop until done or MAX_STEPS reached.
     The TripletexClient uses base_url + session_token from credentials.
     """
+    if request_id:
+        set_request_id(request_id)
+
     base_url = tripletex_credentials["base_url"]
     token = tripletex_credentials["session_token"]
     client = TripletexClient(base_url, token)

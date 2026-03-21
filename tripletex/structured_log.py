@@ -35,6 +35,9 @@ _SENSITIVE_KEYS = frozenset(
 
 MAX_FIELD_BYTES = 3000  # truncate any single string field beyond this size
 
+# Bumped when log line format changes (verify deploy: jsonPayload.log_schema)
+LOG_SCHEMA_VERSION = "v2-rich"
+
 
 def set_request_id(request_id: str) -> None:
     """Set the current request ID for the duration of this async context."""
@@ -112,22 +115,31 @@ def log_event(
         message:  Short human-readable description (also used as the log message).
         **fields: Arbitrary key-value pairs included in jsonPayload.
                   Sensitive keys are stripped automatically.
+        request_id: optional; if set, overrides contextvar (use when logging from main.py).
     """
-    rid = get_request_id()
+    fields_dict = dict(fields)
+    rid_override = fields_dict.pop("request_id", None)
+    rid: str | None = rid_override if isinstance(rid_override, str) else None
+    if rid is None:
+        rid = get_request_id()
+
     payload: dict[str, Any] = {
         "severity": severity.upper(),
         "message": message,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "log_schema": LOG_SCHEMA_VERSION,
     }
     if rid is not None:
         payload["request_id"] = rid
 
-    for k, v in fields.items():
+    for k, v in fields_dict.items():
         if k.lower() not in _SENSITIVE_KEYS:
             payload[k] = _sanitize(v)
 
     # Single self-contained line for Logs Explorer / gcloud --format=value(jsonPayload.message)
     payload["message"] = _build_rich_message(message, rid, payload)
+    # GCP sometimes treats top-level `message` specially; keep a duplicate for queries.
+    payload["agent_log"] = payload["message"]
 
     # Plain line on stderr so `gcloud run services logs read` always shows readable text
     print("[tripletex] " + payload["message"], file=sys.stderr, flush=True)

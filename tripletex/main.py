@@ -31,7 +31,7 @@ async def solve_endpoint(request: Request) -> JSONResponse:
     if not isinstance(files, list):
         files = []
     if not isinstance(creds, dict) or "base_url" not in creds or "session_token" not in creds:
-        log_event("WARNING", "solve_bad_request", detail="Missing tripletex_credentials")
+        log_event("WARNING", "solve_bad_request", detail="Missing tripletex_credentials", request_id=request_id)
         return JSONResponse(
             {"status": "error", "detail": "Missing tripletex_credentials.base_url or session_token"},
             status_code=400,
@@ -40,6 +40,7 @@ async def solve_endpoint(request: Request) -> JSONResponse:
     log_event(
         "INFO",
         "solve_start",
+        request_id=request_id,
         prompt_len=len(prompt),
         file_count=len(files),
         file_names=[f.get("filename", "?") for f in files],
@@ -48,11 +49,11 @@ async def solve_endpoint(request: Request) -> JSONResponse:
     with tempfile.TemporaryDirectory(prefix="ttx_") as tmp:
         work = Path(tmp)
         try:
-            solve(str(prompt), files, creds, work)
+            solve(str(prompt), files, creds, work, request_id=request_id)
         except Exception as exc:
-            log_event("ERROR", "solve_exception", error=str(exc))
+            log_event("ERROR", "solve_exception", error=str(exc), request_id=request_id)
             traceback.print_exc()
             return JSONResponse({"status": "error", "detail": str(exc)}, status_code=500)
 
-    log_event("INFO", "solve_completed")
+    log_event("INFO", "solve_completed", request_id=request_id)
     return JSONResponse({"status": "completed"})
