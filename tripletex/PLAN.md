@@ -24,6 +24,29 @@ HTTPS for test: `npx cloudflared tunnel --url http://localhost:8000`
 - `tripletex_client.py` — HTTP mot proxy med Basic auth
 - `task_handlers/` — valgfrie deterministiske snarveier (utvid etter hvert)
 
+## Cloud Shell / terminal — arbeidsflyt
+
+Når du lever i **Cloud Shell** etter innsending på app.ainm.no: klon repo, sett prosjekt, `source` hjelpefilen, hent logger og rapporter.
+
+```bash
+cd ~
+git clone <repo-url> Silicon-Vikings && cd Silicon-Vikings
+gcloud config set project YOUR_PROJECT_ID
+export PROJECT_ID=YOUR_PROJECT_ID
+source tripletex/scripts/tripletex_shell.sh
+ttx_help
+```
+
+Typisk etter en kjøring med lav score:
+
+1. `ttx_logs_recent 2h` — finn `request_id` i tabellen.
+2. `ttx_logs_rid <full-uuid>` — lim utdrag inn i feilsøking (eller til AI).
+3. `ttx_summarize 24h` → `ttx_report` — oversikt med **API errors by path** og `run_summary` per request.
+
+Valgfritt: `ttx_logs_api_errors 24h`, `ttx_logs_warnings 6h`, `ttx_summarize_csv 7d` (CSV i `/tmp/ttx-agent-runs.csv`).
+
+Hjelpefunksjonene ligger i [tripletex/scripts/tripletex_shell.sh](scripts/tripletex_shell.sh). Service-navn og region kan overstyres: `TTX_SERVICE`, `TTX_REGION`.
+
 ## Strukturert logging
 
 Alle hendelser skrives som én JSON-linje per event til **stdout** → automatisk sendt til **Cloud Logging** av Cloud Run.
@@ -146,6 +169,31 @@ Hvis du ikke vil installere noe: bruk kommandoen over med `--freshness=5m`, elle
 
 > **Merk:** Ser du fortsatt korte linjer som bare `api_call` uten `step=` / `path=` → du kjører **gammelt image**. Sjekk at logg har `jsonPayload.log_schema="v2-rich"` etter deploy. Prosess: `git pull` → `gcloud builds submit` → `gcloud run deploy`.
 
+### Kjør-artefakter (GCS JSONL)
+
+Hver `/solve` kan lagre en **kopi av alle strukturerte logglinjer** (samme JSON som stdout) til **Google Cloud Storage** for analyse uten å parse Cloud Logging.
+
+**Miljøvariabler (Cloud Run → Edit & deploy new revision → Variables):**
+
+| Variabel | Beskrivelse |
+|----------|-------------|
+| `TRIPLETEX_RUN_LOG_GCS_BUCKET` | Bucket-navn (påkrevd for å aktivere). Tom = ingen opplasting. |
+| `TRIPLETEX_RUN_LOG_GCS_PREFIX` | Valgfri mappe-prefix, f.eks. `tripletex-runs` (ingen ledende `/`). |
+
+**Objekter per kjøring** (`prefix`/`YYYY-MM-DD`/`{request_id}.jsonl` og `…_meta.json` med `outcome`, `task_preview`, m.m.):
+
+**IAM:** Cloud Run **service account** (eller den identiteten tjenesten kjører som) trenger f.eks. **`roles/storage.objectCreator`** på bucketen (eller smalere custom role med `storage.objects.create`). Ingen nøkler i repo — bruk Workload Identity.
+
+**Liste filer:**
+
+```bash
+gsutil ls "gs://MY-BUCKET/tripletex-runs/$(date -u +%Y-%m-%d)/"
+```
+
+Opplasting feiler aldri HTTP-responsen; feil skrives til stderr.
+
+**Agent-justeringer (miljø):** `TRIPLETEX_HARD_STOP_PATH_STREAK` (standard `8`) — antall påfølgende feil på *samme* `method+path` før hard stop tvinger `done` (identiske retries tvinger fortsatt `done` etter 5 gjentakelser).
+
 ## Automatisert feedback (logger)
 
 ### `run_summary` per `/solve`
@@ -250,6 +298,7 @@ Alternativt egen metrikk for `jsonPayload.message=~"^run_summary"` med `jsonPayl
 | `roles/logging.viewer` | `gcloud logging read`, summarize-script, Scheduler/Job |
 | `roles/logging.configWriter` | Opprette log sinks |
 | `roles/bigquery.dataEditor` | Sink skriver til BQ dataset |
+| `roles/storage.objectCreator` | Agent laster opp kjør-jsonl til GCS-bucket |
 
 ## Deploy (GCP)
 

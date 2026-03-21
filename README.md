@@ -55,6 +55,8 @@ uvicorn tripletex.main:app --host 0.0.0.0 --port 8000
 
 Deploy: [gcp/setup.md](gcp/setup.md) og [tripletex/Dockerfile](tripletex/Dockerfile).
 
+**Cloud Shell / logger:** `source tripletex/scripts/tripletex_shell.sh` etter `export PROJECT_ID=...` — se [tripletex/PLAN.md](tripletex/PLAN.md) («Cloud Shell / terminal»).
+
 ## Astar Island — rask start
 
 På macOS finnes ofte bare `python3`; bruk prosjektets **venv** (eller full sti til interpreteren).
