@@ -300,18 +300,31 @@ Rules:
 
 ### Ledger review / correction (hovedbok, finn feil i bilag, rette posteringsfeil)
   When the task asks to FIND ERRORS, REVIEW vouchers, FIX wrong account, REMOVE duplicate bilag,
-  or similar (Norwegian: "hovedbok", "bilag", "finn feil", "rett", "duplikat") — do NOT blindly POST /ledger/voucher.
+  or similar (Norwegian: "hovedbok", "bilag", "finn feil", "rett", "duplikat" / English: "general ledger",
+  "vouchers", "errors", "wrong account") — **correction = PUT existing voucher**, not a new POST unless the task
+  explicitly says to create a new bilag.
   Flow:
-  1. GET /ledger/account?fields=id,number,name&count=100  — ONCE, map account numbers (6540, 6860, 7000, …) to IDs
-  2. GET /ledger/posting?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&fields=*,account,voucher,amount,vatType
-     — dateFrom/dateTo are REQUIRED. Use the period from the task (e.g. Jan–Feb 2026 → 2026-01-01 to 2026-03-01 exclusive end).
-     Filter mentally or by accountId after resolving account IDs from step 1.
-  3. GET /ledger/voucher?dateFrom=...&dateTo=...&fields=*  — list bilag in the same period
-  4. GET /ledger/voucher/{id}?fields=*  — full voucher with postings for a specific bilag you need to fix
-  5. PUT /ledger/voucher/{id}?sendToLedger=true  body: {version:N, postings:[...]}  — update existing bilag (GET version first)
-     CRITICAL: Do NOT include "row" field in posting objects — row 0 is system-generated and causes 422. Omit "row" entirely.
-  6. DELETE /ledger/voucher/{id}  — remove a duplicate bilag if the task says so
-  Keywords: "manglande MVA" = add/fix VAT line on posting; wrong konto = change account on posting.
+  1. GET /ledger/account?fields=id,number,name&count=100  — ONCE, map account numbers to IDs
+  2. GET /ledger/posting?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&fields=*,account,voucher,amount,vatType&count=1000
+     — dateFrom/dateTo REQUIRED. Use the task period (e.g. Jan–Feb 2026 → 2026-01-01 .. 2026-02-29 or end of Feb).
+     Use **voucher.id** (or nested voucher on posting) only as a **hint** — always confirm against step 3.
+  3. GET /ledger/voucher?dateFrom=...&dateTo=...&fields=*&count=200  — list all bilag in the period.
+     **Voucher id for GET/PUT/DELETE** = each element's **top-level `id` in `values[]`** from THIS response only.
+     Do NOT invent ids, do NOT use posting ids, gui numbers, or ids from truncated/hallucinated JSON.
+  4. GET /ledger/voucher/{id}?fields=*  — only if {id} appears in step 3's `values[].id`. If **404**: re-run step 3
+     with wider count or dates — do NOT retry the same id more than once; pick another id from the fresh list.
+  5. PUT /ledger/voucher/{id}?sendToLedger=true  body: {version:N, voucherType:{id:...}, date:..., description:...,
+     postings:[...]}  — copy structure from GET in step 4; change only what the task requires (wrong account → new
+     account:{id}; wrong vatType → fix per line). **version** from GET is mandatory.
+     **VAT per line**: system accounts like **2700, 2712, 2710, 2703** (MVA-kontoer) and many balance-sheet lines are
+     **locked to mva-kode 0** («Ingen avgiftsbehandling»). Other accounts may be locked to **mva-kode 6** (e.g.
+     «Ingen utgående avgift (utenfor mva-loven)»). Use GET /ledger/vatType and pick the **exact** id whose name matches
+     **each** validation message — **different lines may need different vatType ids**.
+  6. DELETE /ledger/voucher/{id}  — only if the task explicitly says duplicate/remove; id must be from step 3.
+     If DELETE returns **404**, the id is wrong — get a new list (step 3), do NOT repeat the same DELETE path.
+  Do **NOT** spam POST /ledger/voucher with synthetic multi-line entries to "fix" hovedbok — that causes 422 on
+  locked VAT accounts. Prefer PUT after a successful GET of the real voucher.
+  Keywords: "manglande MVA" = fix vatType/account on existing posting via PUT; wrong konto = PUT with new account id.
 
 ### Ledger / accounts
   GET  /ledger/account    params: {fields:"id,number,name", count:100}
@@ -390,9 +403,12 @@ Rules:
     Without version, Tripletex returns 422.
 12. On 404 errors: assume wrong endpoint/path first.
     Do NOT call the same 404 endpoint again. Switch to a different documented endpoint.
-13. Tasks about reviewing or fixing the general ledger (hovedbok, bilag, posteringsfeil):
-    Search with GET /ledger/posting and GET /ledger/voucher using dateFrom/dateTo from the task period.
-    Do NOT create new vouchers with POST until you have identified what to fix.
+13. Tasks about reviewing or fixing the general ledger (hovedbok, bilag, posteringsfeil, "general ledger", "vouchers"):
+    Use GET /ledger/posting + GET /ledger/voucher (list) in the task period. Voucher ids for GET/PUT/DELETE must come
+    **only** from `values[].id` in the voucher list response — never guessed. Prefer **PUT /ledger/voucher/{id}** with
+    `version` from GET to fix errors; avoid POST /ledger/voucher unless creating a genuinely new bilag. On 404 for
+    GET/DELETE voucher, refresh the list once — do not retry the same wrong id. MVA lines: match each account's locked
+    code via GET /ledger/vatType (0% vs «utenfor mva-loven» / code 6 — can differ per posting line).
 14. On POST /invoice → 422: read validationMessages exactly.
     - "bankkontonummer" = the company has no bank account registered — this CANNOT be fixed via API.
       Output {"action":"done","reasoning":"invoice creation blocked: company has no bank account (cannot fix via API)"}.
@@ -1004,7 +1020,10 @@ def solve(
                     "Do not try to set fixedPrice via POST/PUT /project — it will always fail. "
                     "Use POST /order/orderline on an order linked to the project, or document limitation in done."
                 )
-            if status == 422 and method.upper() == "POST" and (path or "").rstrip("/") == "/ledger/voucher":
+            if status == 422 and method.upper() in ("POST", "PUT") and (
+                (path or "").rstrip("/") == "/ledger/voucher"
+                or re.search(r"/ledger/voucher/\d+", (path or ""))
+            ):
                 bt = str(body_text).lower()
                 feedback += (
                     "\n\nHINT: POST /ledger/voucher usually needs voucherType:{id} from GET /ledger/voucherType. "
@@ -1013,9 +1032,26 @@ def solve(
                 if "låst" in bt or "locked" in bt or "mva-kode" in bt or "vattype" in bt:
                     feedback += (
                         "\n\nHINT: Account is locked to a specific VAT code — GET /ledger/vatType and use the id "
-                        "that matches the message (often 0% / «Ingen avgiftsbehandling»). "
-                        "Do NOT use 25% input VAT on liability accounts locked to 0%. "
+                        "that matches **each** validation line (often 0% / «Ingen avgiftsbehandling» for 2700/2712/2710). "
+                        "Do NOT use 25% VAT on accounts locked to 0%. "
+                        "If the message says **mva-kode 6** / «utenfor mva-loven», pick the vatType whose name matches "
+                        "that — it is different from code 0. **Each posting line may need a different vatType id.** "
                         "For supplier-style vouchers credit **2400** (leverandørgjeld), not random 22xx/23xx accounts."
+                    )
+                if "2700" in str(body_text) or "2712" in str(body_text) or "2710" in str(body_text) or "2703" in str(body_text):
+                    feedback += (
+                        "\n\nHINT: Tripletex **MVA systemkontoer** (2700, 2712, …) are almost always locked to "
+                        "**Ingen avgiftsbehandling (0%)** — not high/low VAT rates. Use the 0% vatType id on those lines."
+                    )
+                if "utenfor mva-loven" in bt or "mva-kode 6" in bt:
+                    feedback += (
+                        "\n\nHINT: Account requires **mva-kode 6** (utenfor mva-loven) — select that exact vatType from "
+                        "GET /ledger/vatType for the affected posting line(s), not 25% or generic 0% if the message says 6."
+                    )
+                if str(body_text).lower().count("låst") >= 2:
+                    feedback += (
+                        "\n\nHINT: Several postings failed VAT validation — fix **line by line**: each `vatType:{id}` "
+                        "must match **that** account's error text; do not reuse one vatType for every row."
                     )
                 if "amountgross" in bt and "amountgrosscurrency" in bt:
                     feedback += (
@@ -1075,6 +1111,15 @@ def solve(
             if status == 404 and method.upper() == "PUT" and "/invoice/" in p_low and "/send" in p_low:
                 feedback += (
                     "\n\nHINT: PUT /invoice/{id}/send 404 — verify id with GET /invoice (date range) in this company."
+                )
+            if status == 404 and method.upper() in ("GET", "DELETE") and re.search(
+                r"/ledger/voucher/\d+", p_low
+            ):
+                feedback += (
+                    "\n\nHINT: /ledger/voucher/{id} 404 — use **id** only from GET /ledger/voucher list (`values[].id`) "
+                    "in the task date range (count:200). Never use posting ids, invented ids, or ids from truncated JSON. "
+                    "Re-list vouchers once; if still 404, pick a different id from the list. For corrections prefer "
+                    "PUT after a successful GET, not DELETE loops."
                 )
             # Also detect loops on error responses (e.g. repeated 404s / 422s)
             call_key = _call_signature(action)
