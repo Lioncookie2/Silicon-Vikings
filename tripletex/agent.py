@@ -54,7 +54,8 @@ Done action (task complete):
 Rules:
 - "params" and "json" can be null if not needed.
 - "method" must be uppercase.
-- Never output anything except the JSON object.
+- Never output anything except ONE JSON object — no text before/after, no second JSON, no trailing commentary
+    (parsing fails if you add prose after the closing brace).
 
 ## Key Tripletex v2 endpoints
 
@@ -370,10 +371,18 @@ def _extract_json(text: str) -> dict[str, Any]:
     # Strip markdown fences if LLM disobeys
     text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
     text = re.sub(r"\n?```$", "", text.strip())
-    m = re.search(r"\{[\s\S]*\}", text)
-    if not m:
+    start = text.find("{")
+    if start < 0:
         raise ValueError(f"No JSON in LLM output: {text[:400]}")
-    return json.loads(m.group(0))
+    # First complete JSON object only — greedy regex breaks on trailing text / two objects
+    decoder = json.JSONDecoder()
+    try:
+        obj, _end = decoder.raw_decode(text[start:])
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in LLM output: {e}: {text[:400]}") from e
+    if not isinstance(obj, dict):
+        raise ValueError(f"JSON root must be object, got {type(obj)}")
+    return obj
 
 
 # ── single API call execution ─────────────────────────────────────────────────

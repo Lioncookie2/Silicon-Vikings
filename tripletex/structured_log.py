@@ -88,10 +88,20 @@ def log_event(
         if k.lower() not in _SENSITIVE_KEYS:
             payload[k] = _sanitize(v)
 
-    # Richer default `message` so plain `gcloud run services logs read` shows text
-    # (not an empty line when the entry is stored as jsonPayload).
+    # Richer default `message` for Logs Explorer
     if rid:
         payload["message"] = f"{message} [rid={rid[:8]}…]"
+
+    # Plain line on stderr so `gcloud run services logs read` always shows readable text
+    # (stdout JSON-only lines often appear as blank rows — content lives in jsonPayload).
+    parts = [payload["severity"], message]
+    if "step" in payload:
+        parts.append(f"step={payload['step']}")
+    if "path" in payload:
+        parts.append(str(payload["path"]))
+    if "status" in payload:
+        parts.append(str(payload["status"]))
+    print("[tripletex] " + " | ".join(str(p) for p in parts), file=sys.stderr, flush=True)
 
     print(json.dumps(payload, default=str, ensure_ascii=False), flush=True)
 
