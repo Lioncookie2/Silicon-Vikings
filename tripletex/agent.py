@@ -231,6 +231,8 @@ Rules:
                  amountGross:-TOTAL_INCL_VAT}
               ]
             }
+  CRITICAL: Do NOT include a "row" field in posting objects — row 0 is system-generated and causes 422.
+            Omit "row" entirely from every posting object.
   NOTE: amountGross is the gross amount including VAT. Tripletex calculates net/VAT split automatically.
   NOTE: /ledger/voucher GET requires dateFrom and dateTo (REQUIRED params).
 
@@ -245,12 +247,14 @@ Rules:
   3. GET /ledger/voucher?dateFrom=...&dateTo=...&fields=*  — list bilag in the same period
   4. GET /ledger/voucher/{id}?fields=*  — full voucher with postings for a specific bilag you need to fix
   5. PUT /ledger/voucher/{id}?sendToLedger=true  body: {version:N, postings:[...]}  — update existing bilag (GET version first)
+     CRITICAL: Do NOT include "row" field in posting objects — row 0 is system-generated and causes 422. Omit "row" entirely.
   6. DELETE /ledger/voucher/{id}  — remove a duplicate bilag if the task says so
   Keywords: "manglande MVA" = add/fix VAT line on posting; wrong konto = change account on posting.
 
 ### Ledger / accounts
   GET  /ledger/account    params: {fields:"id,number,name", count:100}
-  Call at most ONCE per task unless you need a broader search — do not repeat identical GETs.
+  Call at most **ONCE** per task — you get all accounts in one call with count:100.
+  Do NOT repeat GET /ledger/account multiple times; use the result from the first call to map all needed IDs.
   GET  /ledger/voucherType  params: {fields:"id,name", count:50}  — bilagstyper; needed for POST /ledger/voucher
   GET  /ledger/voucher       params: {dateFrom:"YYYY-MM-DD", dateTo:"YYYY-MM-DD", fields:"*", count:100}
   GET  /ledger/voucher/{id}  params: {fields:"*"}
@@ -323,6 +327,9 @@ Rules:
     spam POST /ledger/voucher without a voucherType.
 17. POST /employee **always** include userType:{id:X} from GET /employee/userType (never 0, never omit).
     If the API says «Brukertype» / user type cannot be empty, you forgot this field.
+18. postings in POST/PUT /ledger/voucher must **never** include a "row" field.
+    Row 0 is system-generated; any posting with row=0 (or row omitted but defaulting to 0) causes
+    «Posteringene på rad 0 er systemgenererte». Strip "row" from every posting object.
 """
 
 
@@ -422,6 +429,18 @@ def _call_signature(action: dict[str, Any]) -> tuple[str, str, str, str]:
     return (method, path, p_s, j_s)
 
 
+def _strip_posting_rows(body: dict[str, Any] | None, path: str) -> dict[str, Any] | None:
+    """Remove 'row' from posting objects in /ledger/voucher calls.
+    Tripletex rejects row=0 (system-generated row) with 422."""
+    if body is None or "ledger/voucher" not in path:
+        return body
+    postings = body.get("postings")
+    if isinstance(postings, list):
+        cleaned = [{k: v for k, v in p.items() if k != "row"} for p in postings if isinstance(p, dict)]
+        return {**body, "postings": cleaned}
+    return body
+
+
 def _execute_call(
     client: TripletexClient, action: dict[str, Any]
 ) -> _requests.Response:
@@ -434,6 +453,8 @@ def _execute_call(
         params = None
     if not isinstance(body, dict):
         body = None
+
+    body = _strip_posting_rows(body, path)
 
     if method == "GET":
         return client.get(path, params=params)
