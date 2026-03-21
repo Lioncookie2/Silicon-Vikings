@@ -145,7 +145,8 @@ Rules:
                             (customer, orders, dates, …). Do NOT add supplier fields, invoiceLines, or
                             supplierInvoiceNumber here — 422 "unknown field" means wrong API or wrong object type.
   GET  /invoice/paymentType  params: {fields:"id,description", count:20}
-                          — if POST /invoice returns 422 about payment, try including paymentType:{id:…} from here.
+                          — look up valid payment types if needed; do NOT pass paymentType as a top-level field
+                            on POST /invoice — "paymentType" does not exist on InvoiceDTO (will get 422).
   PUT  /invoice/{id}/send     — send invoice by email (no request body needed)
                           If 404: the invoice id does not exist in this company — GET /invoice with dates first
                             and use an id from that list; do not invent ids from old responses.
@@ -179,9 +180,17 @@ Rules:
 
 ### Projects
   POST /project           body: {name:"...", customer:{id:X}, startDate:"YYYY-MM-DD"}
-  GET  /project           params: {fields:"id,name,version", count:10}
+  GET  /project           params: {fields:"id,name,version,projectType", count:10}
   PUT  /project/{id}      body: {version:N, name:"...", ...}  ← version is REQUIRED for all PUTs
                           Always GET the resource first to obtain its current version number.
+  NOTE: **fixedPrice** is NOT a field on ProjectDTO — 422 if you try to set it.
+        To set a fixed price / budget on a project:
+        a) GET /project/projectType to see available project types (some allow fixed price).
+        b) Set a project budget via PUT /project/{id} with `budget:{id:..., budgetType:"FIXED_PRICE", ...}`
+           if budget endpoint is available, or simply note that the API may not support this directly.
+        c) As a fallback: create an order line on an order linked to this project with the fixed price amount.
+        d) If no budget/fixed-price endpoint is available: document the limitation in the "done" reasoning
+           and do NOT keep trying `fixedPrice` on POST/PUT /project (it will always fail).
 
 ### Activities (for timesheet entries)
   GET  /activity                    params: {fields:"id,name,isGeneral", count:100}
@@ -316,9 +325,11 @@ Rules:
 13. Tasks about reviewing or fixing the general ledger (hovedbok, bilag, posteringsfeil):
     Search with GET /ledger/posting and GET /ledger/voucher using dateFrom/dateTo from the task period.
     Do NOT create new vouchers with POST until you have identified what to fix.
-14. On POST /invoice → 422: read validationMessages in the API response body exactly — do NOT invent reasons
-    (e.g. "bank account") unless the error text says so. Retry with corrected fields, vatType on order lines,
-    or GET /invoice/paymentType if payment-related.
+14. On POST /invoice → 422: read validationMessages exactly.
+    - "bankkontonummer" = the company has no bank account registered — this CANNOT be fixed via API.
+      Output {"action":"done","reasoning":"invoice creation blocked: company has no bank account (cannot fix via API)"}.
+    - "paymentType" = do NOT add paymentType as a top-level field on POST /invoice; it is not a valid field.
+    - Other 422: retry with corrected fields.
 15. POST /invoice is ONLY for **outgoing customer invoices** (body: customer + orders). If validationMessages
     mention unknown fields like invoiceLines or supplierInvoiceNumber, you are using the wrong API — use the
     supplier + POST /ledger/voucher flow instead (see "Incoming invoices").
@@ -651,10 +662,27 @@ def solve(
             # Targeted hints (do not replace validationMessages — append context for the LLM)
             p_low = (path or "").lower()
             if status == 422 and method.upper() == "POST" and p_low.rstrip("/").endswith("/invoice"):
+                if "bankkontonummer" in str(body_text).lower() or "bank account" in str(body_text).lower():
+                    feedback += (
+                        "\n\nHINT: Company has no bank account registered — this CANNOT be fixed via API. "
+                        "Output {\"action\":\"done\",\"reasoning\":\"invoice blocked: company has no bank account\"} immediately."
+                    )
+                elif "paymenttype" in str(body_text).lower():
+                    feedback += (
+                        "\n\nHINT: paymentType is NOT a valid field on POST /invoice body. Remove it. "
+                        "Valid fields: invoiceDate, invoiceDueDate, customer:{id}, orders:[{id}]."
+                    )
+                else:
+                    feedback += (
+                        "\n\nHINT: POST /invoice is for OUTGOING customer invoices (customer + orders). "
+                        "If errors mention unknown fields (invoiceLines, supplier, …), use supplier + "
+                        "POST /ledger/voucher instead."
+                    )
+            if ("fixedprice" in str(body_text).lower() or "fixedPrice" in str(body_text)) and status in (400, 422):
                 feedback += (
-                    "\n\nHINT: POST /invoice is for OUTGOING customer invoices (customer + orders). "
-                    "If errors mention unknown fields (invoiceLines, supplier, …), use supplier + "
-                    "POST /ledger/voucher instead."
+                    "\n\nHINT: fixedPrice is NOT a field on ProjectDTO. "
+                    "Do not try to set fixedPrice via POST/PUT /project — it will always fail. "
+                    "Try GET /project/projectType to see project types, or skip fixed-price if unavailable."
                 )
             if status == 422 and method.upper() == "POST" and (path or "").rstrip("/") == "/ledger/voucher":
                 feedback += (
