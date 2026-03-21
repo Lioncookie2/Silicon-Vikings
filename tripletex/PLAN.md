@@ -120,6 +120,14 @@ gcloud run services logs read tripletex-agent \
   --limit 200
 ```
 
+**Live tail (krever `beta`-sporet — installer med `gcloud components install beta` hvis den mangler):**
+
+```bash
+gcloud beta run services logs tail tripletex-agent \
+  --region europe-north1 \
+  --project "$PROJECT_ID"
+```
+
 > **Merk:** Ser du fortsatt korte linjer som bare `api_call` uten `step=` / `path=` → du kjører **gammelt image**. Sjekk at logg har `jsonPayload.log_schema="v2-rich"` etter deploy. Prosess: `git pull` → `gcloud builds submit` → `gcloud run deploy`.
 
 Se [TASK_COVERAGE.md](TASK_COVERAGE.md) for sjekkliste over støttede oppgavetyper.

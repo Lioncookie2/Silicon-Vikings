@@ -116,15 +116,20 @@ Rules:
                                  unitPriceExcludingVatCurrency:N, vatType:{id:Z}}
                           — vatType per line when the task specifies different VAT % per product line.
                             Resolve Z via GET /ledger/vatType (match percentage: 25, 15, 0).
+                          For **sales** lines, pick an **outgoing / sales** VAT type (e.g. "utgående", "25%"),
+                            NOT purchase/input VAT (e.g. "Fradrag inngående avgift") — that causes 422 on order lines.
+                          Each orderline needs a **product** OR a **description** (validation error if both missing).
                           NOTE: /order/{id}/orderline does NOT exist (404). Use /order/orderline.
   GET  /product           params: {number:"7733", fields:"id,name,number,vatType", count:10}
                           — filter by product number to avoid repeating generic GET /product.
 
 ### Invoices (OUTGOING / sales only — to customers)
   GET  /invoice           params: {invoiceDateFrom:"YYYY-MM-DD", invoiceDateTo:"YYYY-MM-DD",
-                                    fields:"id,invoiceNumber,customer,amountCurrency,invoiceDate,dueDate",
+                                    fields:"id,invoiceNumber,customer,amountCurrency,invoiceDate,invoiceDueDate",
                                     count:100}
                           NOTE: invoiceDateFrom AND invoiceDateTo are REQUIRED (400 without them).
+                          NOTE: do NOT use "dueDate" in fields — it is NOT a field on InvoiceDTO (400 Illegal field).
+                            Use invoiceDueDate if you need the due date column.
                           Default range: use year-start to today (both provided in context as TODAY and YEAR_START).
   POST /invoice           body: {invoiceDate:"YYYY-MM-DD", invoiceDueDate:"YYYY-MM-DD",
                                   customer:{id:X}, orders:[{id:Y}]}
@@ -135,6 +140,8 @@ Rules:
   GET  /invoice/paymentType  params: {fields:"id,description", count:20}
                           — if POST /invoice returns 422 about payment, try including paymentType:{id:…} from here.
   PUT  /invoice/{id}/send     — send invoice by email (no request body needed)
+                          If 404: the invoice id does not exist in this company — GET /invoice with dates first
+                            and use an id from that list; do not invent ids from old responses.
 
 ### Payments
   POST /invoice/{id}/payment  body: {paymentDate:"YYYY-MM-DD", paymentTypeId:2,
@@ -628,6 +635,15 @@ def solve(
                 feedback += (
                     "\n\nHINT: POST /employee needs unique employeeNumber (integer) and valid email. "
                     "Read validationMessages field-by-field."
+                )
+            if status == 400 and method.upper() == "GET" and "/invoice" in p_low and "dueDate" in str(body_text):
+                feedback += (
+                    "\n\nHINT: GET /invoice `fields` must use only InvoiceDTO field names. "
+                    "Remove dueDate — use invoiceDueDate instead (or omit fields filter)."
+                )
+            if status == 404 and method.upper() == "PUT" and "/invoice/" in p_low and "/send" in p_low:
+                feedback += (
+                    "\n\nHINT: PUT /invoice/{id}/send 404 — verify id with GET /invoice (date range) in this company."
                 )
             # Also detect loops on error responses (e.g. repeated 404s / 422s)
             call_key = _call_signature(action)
