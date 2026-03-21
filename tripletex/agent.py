@@ -32,7 +32,51 @@ from .tripletex_client import TripletexClient
 MAX_STEPS = 20              # hard cap — never loop forever
 RESPONSE_TRUNCATE_GET = 4000   # GET list responses can be large — agent needs to see all IDs
 RESPONSE_TRUNCATE_WRITE = 800  # POST/PUT/DELETE only return {value:{id:X}}, so 800 is fine
-RESPONSE_TRUNCATE_ERROR = 2500  # error bodies may contain validationMessages — keep more
+RESPONSE_TRUNCATE_ERROR = 2500  # non-422 errors / fallback cap when serialising API body for LLM
+RESPONSE_TRUNCATE_ERROR_422 = 8000  # 422: prioritize full validationMessages in JSON sent to LLM
+
+
+def _hard_stop_path_streak_limit() -> int:
+    """Consecutive failures on same method+path (any body) before forced done. Override: TRIPLETEX_HARD_STOP_PATH_STREAK."""
+    raw = os.environ.get("TRIPLETEX_HARD_STOP_PATH_STREAK", "8").strip()
+    try:
+        n = int(raw, 10)
+        return max(4, min(n, 50))
+    except ValueError:
+        return 8
+
+
+def _compact_error_body_for_llm(status: int, body_text: Any) -> Any:
+    """Prefer keeping message + validationMessages for 422; trim other keys to a short tail."""
+    if status != 422 or not isinstance(body_text, dict):
+        return body_text
+    msgs = body_text.get("validationMessages")
+    if msgs is None:
+        return body_text
+    other = {k: v for k, v in body_text.items() if k not in ("message", "validationMessages")}
+    out: dict[str, Any] = {
+        "message": body_text.get("message"),
+        "validationMessages": msgs,
+    }
+    if other:
+        try:
+            tail = json.dumps(_truncate_strings_in_obj(other, 800), ensure_ascii=False)
+        except TypeError:
+            tail = str(other)[:2000]
+        if len(tail) > 2000:
+            tail = tail[:2000] + "…"
+        out["_additionalFields"] = tail
+    return out
+
+
+def _truncate_strings_in_obj(obj: Any, max_len: int) -> Any:
+    if isinstance(obj, dict):
+        return {k: _truncate_strings_in_obj(v, max_len) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_truncate_strings_in_obj(v, max_len) for v in obj]
+    if isinstance(obj, str) and len(obj) > max_len:
+        return obj[:max_len] + "…"
+    return obj
 
 # ── system prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert Tripletex v2 REST API agent for NM i AI 2026.
@@ -549,18 +593,124 @@ _VALID_USER_TYPES = {"STANDARD_USER", "EMPLOYEE", "ADMINISTRATOR", "EXTERNAL_USE
 def _sanitize_employee_body(
     body: dict[str, Any] | None, method: str, path: str
 ) -> dict[str, Any] | None:
-    """Auto-fix userType for POST /employee.
-    If the LLM sends userType as an object, integer, or unknown string, force 'STANDARD_USER'.
-    This prevents the infinite 422 loop from wrong userType types."""
+    """Normalize userType for POST /employee.
+
+    Do **not** inject userType when the LLM omits it — some proxies/API builds expect the
+    field absent (server default) and reject string enums like \"STANDARD_USER\".
+
+    - Missing userType: leave unchanged.
+    - int → {\"id\": n}; dict with id: keep.
+    - Valid enum string: keep (fallback retries handle proxies that reject strings).
+    - Otherwise: drop userType so POST can succeed with server default."""
     if body is None:
         return body
     if method.upper() != "POST" or not (path or "").rstrip("/").endswith("/employee"):
         return body
-    ut = body.get("userType")
+    out = dict(body)
+    ut = out.get("userType")
+    if ut is None:
+        return out
+    if isinstance(ut, dict) and ut.get("id") is not None:
+        return out
+    if isinstance(ut, int):
+        out["userType"] = {"id": int(ut)}
+        return out
     if isinstance(ut, str) and ut in _VALID_USER_TYPES:
-        return body  # already correct
-    # Missing, wrong type (dict/int), or unknown string → default to STANDARD_USER
-    return {**body, "userType": "STANDARD_USER"}
+        return out
+    out.pop("userType", None)
+    return out
+
+
+def _employee_post_usertype_422(body_text: Any) -> bool:
+    """True if error payload suggests userType mapping/type failure on POST /employee."""
+    if isinstance(body_text, dict):
+        blob = json.dumps(body_text, ensure_ascii=False).lower()
+    else:
+        blob = str(body_text).lower()
+    if "usertype" not in blob:
+        return False
+    return (
+        "korrekt type" in blob
+        or "correct type" in blob
+        or "ikke av korrekt type" in blob
+        or "mapping failed" in blob
+        or "request mapping failed" in blob
+    )
+
+
+def _execute_post_employee(client: TripletexClient, path: str, body: dict[str, Any] | None) -> _requests.Response:
+    """POST /employee only. Retries without userType and with userType {{id}} from GET /employee."""
+    if body is None:
+        return client.post(path, json=body)
+    resp = client.post(path, json=body)
+    if resp.status_code < 400:
+        return resp
+    if resp.status_code != 422:
+        return resp
+    try:
+        err_json = resp.json()
+    except Exception:
+        err_json = {}
+    if not _employee_post_usertype_422(err_json):
+        return resp
+
+    if "userType" in body:
+        stripped = {k: v for k, v in body.items() if k != "userType"}
+        r2 = client.post(path, json=stripped)
+        if r2.status_code < 400:
+            return r2
+        resp = r2
+        try:
+            err_json = r2.json()
+        except Exception:
+            err_json = {}
+        if not _employee_post_usertype_422(err_json):
+            return r2
+
+    try:
+        gr = client.get("/employee", params={"fields": "id,userType(id)", "count": 30})
+        if gr.status_code != 200:
+            return resp
+        data = gr.json()
+        base = {k: v for k, v in body.items() if k != "userType"}
+        for emp in data.get("values") or []:
+            ut = emp.get("userType")
+            uid: int | None = None
+            if isinstance(ut, dict) and ut.get("id") is not None:
+                try:
+                    uid = int(ut["id"])
+                except (TypeError, ValueError):
+                    uid = None
+            elif isinstance(ut, int):
+                uid = ut
+            if uid is None:
+                continue
+            r3 = client.post(path, json={**base, "userType": {"id": uid}})
+            if r3.status_code < 400:
+                return r3
+            resp = r3
+
+        # Still userType 422 (greenfield or no usable userType on listed employees) — try enum ids
+        if resp.status_code >= 400:
+            try:
+                ej = resp.json()
+            except Exception:
+                ej = {}
+            if _employee_post_usertype_422(ej):
+                for guess_id in (1, 2, 3, 4, 5):
+                    rx = client.post(path, json={**base, "userType": {"id": guess_id}})
+                    if rx.status_code < 400:
+                        return rx
+                    try:
+                        ej2 = rx.json()
+                    except Exception:
+                        ej2 = {}
+                    if not _employee_post_usertype_422(ej2):
+                        return rx
+                    resp = rx
+    except Exception:
+        pass
+    return resp
 
 
 def _execute_invoice_payment(
@@ -597,20 +747,33 @@ def _execute_invoice_payment(
     return last
 
 
-def _assign_posting_rows(body: dict[str, Any] | None, path: str) -> dict[str, Any] | None:
-    """Assign 1-based row numbers to postings in /ledger/voucher calls.
-    Tripletex row 0 is system-generated; when row is missing the API defaults to 0 → 422.
-    We always override row to 1, 2, 3... regardless of what the LLM sent."""
-    if body is None or "ledger/voucher" not in path:
+def _sanitize_ledger_voucher_postings(
+    body: dict[str, Any] | None, method: str, path: str
+) -> dict[str, Any] | None:
+    """Align with Tripletex + SYSTEM_PROMPT: do not send `row` on new vouchers.
+
+    POST /ledger/voucher: strip `row` from every posting (row 0 is system-generated; forcing
+    row 1..n caused widespread 422s).
+    PUT /ledger/voucher/{id}: keep rows from GET when present; only strip row if it is 0."""
+    if body is None or "ledger/voucher" not in (path or ""):
         return body
     postings = body.get("postings")
-    if isinstance(postings, list):
-        renumbered = []
-        for i, p in enumerate(postings):
-            if isinstance(p, dict):
-                renumbered.append({**{k: v for k, v in p.items() if k != "row"}, "row": i + 1})
-        return {**body, "postings": renumbered}
-    return body
+    if not isinstance(postings, list):
+        return body
+    p_norm = (path or "").rstrip("/")
+    is_new_voucher = method.upper() == "POST" and p_norm == "/ledger/voucher"
+    out: list[Any] = []
+    for item in postings:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
+        d = dict(item)
+        if is_new_voucher:
+            d.pop("row", None)
+        elif d.get("row") == 0:
+            d.pop("row", None)
+        out.append(d)
+    return {**body, "postings": out}
 
 
 def _execute_call(
@@ -626,7 +789,7 @@ def _execute_call(
     if not isinstance(body, dict):
         body = None
 
-    body = _assign_posting_rows(body, path)
+    body = _sanitize_ledger_voucher_postings(body, method, path)
     body = _sanitize_employee_body(body, method, path)
 
     if isinstance(body, dict) and method in ("POST", "PUT"):
@@ -637,6 +800,9 @@ def _execute_call(
     if method == "GET":
         return client.get(path, params=params)
     elif method == "POST":
+        p_norm = (path or "").rstrip("/")
+        if p_norm == "/employee":
+            return _execute_post_employee(client, path, body)
         return client.post(path, json=body)
     elif method == "PUT":
         return client.put(path, json=body)
@@ -996,14 +1162,16 @@ def solve(
             body_text = resp.text
 
         is_error = status >= 400
+        body_for_llm = _compact_error_body_for_llm(status, body_text) if is_error else body_text
         truncate_limit = (
-            RESPONSE_TRUNCATE_ERROR if is_error
-            else RESPONSE_TRUNCATE_GET if method.upper() == "GET"
-            else RESPONSE_TRUNCATE_WRITE
+            RESPONSE_TRUNCATE_GET if method.upper() == "GET" and not is_error
+            else RESPONSE_TRUNCATE_WRITE if not is_error
+            else RESPONSE_TRUNCATE_ERROR_422 if status == 422
+            else RESPONSE_TRUNCATE_ERROR
         )
         resp_summary = json.dumps({
             "status": status,
-            "body": body_text,
+            "body": body_for_llm,
         }, ensure_ascii=False)[:truncate_limit]
 
         if is_error:
@@ -1113,9 +1281,11 @@ def solve(
                 )
             if status == 422 and method.upper() == "POST" and p_low.rstrip("/").endswith("/employee"):
                 feedback += (
-                    "\n\nHINT: userType must be a string: \"STANDARD_USER\" (default), \"EMPLOYEE\", or \"ADMINISTRATOR\". "
-                    "Do NOT send {id:X} or call GET /employee/userType (that path does not exist). "
-                    "Fix: add \"userType\": \"STANDARD_USER\" to the body."
+                    "\n\nHINT: userType 422 — try in order: (1) omit userType entirely for server default; "
+                    "(2) \"userType\": \"STANDARD_USER\" | \"EMPLOYEE\" | \"ADMINISTRATOR\"; "
+                    "(3) \"userType\": {\"id\": N} where N is from GET /employee?fields=id,userType(id). "
+                    "The server may reject string enums; the agent retries automatically but your next "
+                    "payload should vary if you still see this error."
                 )
             if status == 422 and method.upper() == "POST" and p_low.rstrip("/").endswith("/activity"):
                 if "activityType" in str(body_text).lower() or "activitytype" in str(body_text).lower():
@@ -1169,21 +1339,32 @@ def solve(
             # Per-path streak (body-independent) — catches loops where body changes but path keeps failing
             pk = (method.upper(), (path or "").rstrip("/"))
             path_streak = path_fail_streak.get(pk, 0)
-            if n_identical >= 5 or path_streak >= 5:
+            path_hard = _hard_stop_path_streak_limit()
+            identical_hard = n_identical >= 5
+            path_only_hard = not identical_hard and path_streak >= path_hard
+            if identical_hard or path_only_hard:
                 run_stats["hard_stop_count"] += 1
                 log_event(
                     "ERROR", "hard_stop",
                     step=step, call_key=str(call_key), n_identical=n_identical,
+                    path_streak=path_streak, path_streak_limit=path_hard,
+                    reason="identical_repeats" if identical_hard else "path_streak",
                 )
                 messages.append({"role": "user", "content": feedback})
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "HARD STOP: You have failed on this exact endpoint 5 times in a row. "
+                if identical_hard:
+                    hard_txt = (
+                        "HARD STOP: You have sent the **same** request 5 times in a row without success. "
+                        "You MUST output {\"action\":\"done\",\"reasoning\":\"could not complete — same request failed repeatedly\"} RIGHT NOW. "
+                        "Do NOT make any more API calls."
+                    )
+                else:
+                    hard_txt = (
+                        f"HARD STOP: The same URL has failed {path_streak} times in a row (limit {path_hard}) "
+                        "with different payloads — change strategy or endpoint. "
                         "You MUST output {\"action\":\"done\",\"reasoning\":\"could not complete — endpoint failed repeatedly\"} RIGHT NOW. "
                         "Do NOT make any more API calls."
                     )
-                })
+                messages.append({"role": "user", "content": hard_txt})
                 continue
             elif n_identical >= 3 or path_streak >= 3:
                 run_stats["error_loop_count"] += 1
