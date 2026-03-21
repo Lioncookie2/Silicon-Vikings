@@ -60,13 +60,19 @@ Rules:
 ## Key Tripletex v2 endpoints
 
 ### Employees
-  POST /employee          body: {firstName, lastName, email, employeeNumber}
+  GET  /employee/userType params: {fields:"id,name", count:50}
+                          — **Call this before POST /employee.** You need a valid userType id for the body.
+  POST /employee          body: {firstName, lastName, email, employeeNumber, userType:{id:X}}
+                          — **userType:{id:X} is required** in most companies. NEVER use 0 or omit userType.
+                            Pick X from GET /employee/userType (match name e.g. employee / "Ordinær" / default).
+                            If GET /employee/userType is unavailable, GET /employee?fields=id,userType&count=5
+                            and reuse a userType.id from an existing employee record.
                           — employeeNumber: **integer**, must be **unique** in the company (if 422 "duplicate",
                             increment or change the number). Read validationMessages for missing fields.
                           — Optional: division:{id:X}, department:{id:Y} — GET /division and GET /department first
                             when the task mentions avdeling/department.
                           — Optional nested address: {addressLine1, postalCode, city}
-  GET  /employee          params: {fields:"id,firstName,lastName,email", count:10}
+  GET  /employee          params: {fields:"id,firstName,lastName,email,userType", count:10}
   GET  /division          params: {fields:"id,name", count:50}
   PUT  /employee/{id}     body: {version:N, ...}  ← GET first for version when updating
 
@@ -74,10 +80,11 @@ Rules:
   Typical sequence (adjust to validationMessages):
   1. GET /department — resolve department id by name/number from the task/PDF
   2. GET /division — if the task implies a division
-  3. POST /employee — create person; fix 422 before continuing
-  4. POST /employee/employment — {employee:{id}, startDate:"YYYY-MM-DD"}
-  5. POST /employee/employment/details — salary: annualSalary, percentageOfFullTimeEquivalent, remunerationType
-  6. Standard working hours may be part of employment details or require additional PUTs — follow API errors
+  3. GET /employee/userType — pick userType id (required on POST /employee; «Brukertype … 0 eller tom» = missing/invalid userType)
+  4. POST /employee — include userType:{id:…}; fix 422 before continuing
+  5. POST /employee/employment — {employee:{id}, startDate:"YYYY-MM-DD"}
+  6. POST /employee/employment/details — salary: annualSalary, percentageOfFullTimeEquivalent, remunerationType
+  7. Standard working hours may be part of employment details or require additional PUTs — follow API errors
 
 ### Roles (assign after creating employee)
   PUT /employee/{id}/employment/... — use employeeId link
@@ -314,6 +321,8 @@ Rules:
 16. POST /ledger/voucher for **new** vouchers requires voucherType:{id} from GET /ledger/voucherType.
     For **hovedbok correction** tasks, prefer GET /ledger/posting + GET /ledger/voucher + PUT/DELETE — do not
     spam POST /ledger/voucher without a voucherType.
+17. POST /employee **always** include userType:{id:X} from GET /employee/userType (never 0, never omit).
+    If the API says «Brukertype» / user type cannot be empty, you forgot this field.
 """
 
 
@@ -633,8 +642,8 @@ def solve(
                 )
             if status == 422 and method.upper() == "POST" and p_low.rstrip("/").endswith("/employee"):
                 feedback += (
-                    "\n\nHINT: POST /employee needs unique employeeNumber (integer) and valid email. "
-                    "Read validationMessages field-by-field."
+                    "\n\nHINT: POST /employee needs userType:{id:X} from GET /employee/userType (never 0). "
+                    "Also unique employeeNumber and valid email. If error says «Brukertype» / user type: fix userType first."
                 )
             if status == 400 and method.upper() == "GET" and "/invoice" in p_low and "dueDate" in str(body_text):
                 feedback += (
