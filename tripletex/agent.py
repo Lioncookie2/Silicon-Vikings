@@ -441,6 +441,26 @@ def _call_signature(action: dict[str, Any]) -> tuple[str, str, str, str]:
     return (method, path, p_s, j_s)
 
 
+_VALID_USER_TYPES = {"STANDARD_USER", "EMPLOYEE", "ADMINISTRATOR", "EXTERNAL_USER"}
+
+
+def _sanitize_employee_body(
+    body: dict[str, Any] | None, method: str, path: str
+) -> dict[str, Any] | None:
+    """Auto-fix userType for POST /employee.
+    If the LLM sends userType as an object, integer, or unknown string, force 'STANDARD_USER'.
+    This prevents the infinite 422 loop from wrong userType types."""
+    if body is None:
+        return body
+    if method.upper() != "POST" or not (path or "").rstrip("/").endswith("/employee"):
+        return body
+    ut = body.get("userType")
+    if isinstance(ut, str) and ut in _VALID_USER_TYPES:
+        return body  # already correct
+    # Missing, wrong type (dict/int), or unknown string → default to STANDARD_USER
+    return {**body, "userType": "STANDARD_USER"}
+
+
 def _assign_posting_rows(body: dict[str, Any] | None, path: str) -> dict[str, Any] | None:
     """Assign 1-based row numbers to postings in /ledger/voucher calls.
     Tripletex row 0 is system-generated; when row is missing the API defaults to 0 → 422.
@@ -471,6 +491,7 @@ def _execute_call(
         body = None
 
     body = _assign_posting_rows(body, path)
+    body = _sanitize_employee_body(body, method, path)
 
     if method == "GET":
         return client.get(path, params=params)
@@ -485,6 +506,61 @@ def _execute_call(
 
 
 # ── file handling ─────────────────────────────────────────────────────────────
+
+def _extract_docx_text(raw: bytes) -> str:
+    """Extract text from .docx (Office Open XML) using stdlib zipfile + ElementTree."""
+    import zipfile, io
+    import xml.etree.ElementTree as ET
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            with z.open("word/document.xml") as f:
+                tree = ET.parse(f)
+        ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        texts = [el.text for el in tree.findall(".//w:t", ns) if el.text]
+        return " ".join(texts)[:5000]
+    except Exception as e:
+        return f"(docx — could not extract: {e})"
+
+
+def _extract_xlsx_text(raw: bytes) -> str:
+    """Extract text from .xlsx (Office Open XML) using stdlib zipfile + ElementTree."""
+    import zipfile, io
+    import xml.etree.ElementTree as ET
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            names = z.namelist()
+            # Load shared strings (text cells are stored here by index)
+            shared: list[str] = []
+            if "xl/sharedStrings.xml" in names:
+                with z.open("xl/sharedStrings.xml") as f:
+                    tree = ET.parse(f)
+                ns = {"ns": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+                for si in tree.findall(".//ns:si", ns):
+                    parts = [el.text or "" for el in si.findall(".//ns:t", ns)]
+                    shared.append("".join(parts))
+            # Read the first worksheet
+            sheets = sorted(n for n in names if n.startswith("xl/worksheets/sheet"))
+            rows: list[str] = []
+            if sheets:
+                with z.open(sheets[0]) as f:
+                    tree = ET.parse(f)
+                ns = {"ns": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+                for row in tree.findall(".//ns:row", ns):
+                    cells = []
+                    for c in row.findall("ns:c", ns):
+                        v = c.find("ns:v", ns)
+                        if v is not None and v.text:
+                            if c.get("t") == "s":
+                                idx = int(v.text)
+                                cells.append(shared[idx] if idx < len(shared) else v.text)
+                            else:
+                                cells.append(v.text)
+                    if cells:
+                        rows.append("\t".join(cells))
+        return "\n".join(rows)[:5000]
+    except Exception as e:
+        return f"(xlsx — could not extract: {e})"
+
 
 def _extract_pdf_text(raw: bytes) -> str:
     """Extract text from PDF bytes.
@@ -510,9 +586,7 @@ def _extract_pdf_text(raw: bytes) -> str:
         pass
 
     if len(text.strip()) >= 200:
-        return text[:3000]
-
-    # Fallback: send raw PDF bytes to Gemini Vision
+        return text[:5000]
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if key:
         try:
@@ -542,11 +616,11 @@ def _extract_pdf_text(raw: bytes) -> str:
             )
             extracted = resp.text or ""
             if extracted.strip():
-                return extracted[:3000]
+                return extracted[:5000]
         except Exception:
             pass
 
-    return text[:3000] if text else "(PDF — could not extract text)"
+    return text[:5000] if text else "(PDF — could not extract text)"
 
 
 def _extract_image_text(raw: bytes, mime_type: str) -> str:
@@ -585,7 +659,7 @@ def _extract_image_text(raw: bytes, mime_type: str) -> str:
 
 
 def _process_files(files: list[dict[str, str]], workdir: Path) -> str:
-    """Decode base64 files, extract text from PDFs/images, return context string."""
+    """Decode base64 files, extract text from PDFs/images/Office docs, return context string."""
     workdir.mkdir(parents=True, exist_ok=True)
     context_parts: list[str] = []
 
@@ -597,6 +671,7 @@ def _process_files(files: list[dict[str, str]], workdir: Path) -> str:
         ".webp": "image/webp",
         ".bmp": "image/bmp",
     }
+    _TEXT_EXTS = {".txt", ".csv", ".json", ".html", ".htm", ".xml"}
 
     for f in files:
         name = f.get("filename") or "attachment.bin"
@@ -613,9 +688,15 @@ def _process_files(files: list[dict[str, str]], workdir: Path) -> str:
         if ext == ".pdf":
             text = _extract_pdf_text(raw)
             context_parts.append(f"[File: {name}]\n{text}")
-        elif ext in {".txt", ".csv", ".json"}:
+        elif ext in {".docx", ".docm"}:
+            text = _extract_docx_text(raw)
+            context_parts.append(f"[File: {name}]\n{text}")
+        elif ext in {".xlsx", ".xlsm"}:
+            text = _extract_xlsx_text(raw)
+            context_parts.append(f"[File: {name}]\n{text}")
+        elif ext in _TEXT_EXTS:
             try:
-                context_parts.append(f"[File: {name}]\n{raw.decode('utf-8', errors='replace')[:2000]}")
+                context_parts.append(f"[File: {name}]\n{raw.decode('utf-8', errors='replace')[:3000]}")
             except Exception:
                 pass
         elif ext in _IMAGE_MIME:
@@ -681,6 +762,7 @@ def solve(
     log_event("INFO", "agent_task", task_preview=prompt[:300], max_steps=MAX_STEPS)
 
     recent_calls: list[tuple[str, str]] = []  # (method, path) of successful calls
+    path_fail_streak: dict[tuple[str, str], int] = {}  # (method, path) → consecutive failures
 
     for step in range(MAX_STEPS):
         log_event("DEBUG", "llm_call", step=step, context_messages=len(messages))
@@ -752,8 +834,19 @@ def solve(
 
         if is_error:
             log_api_error(step, method, path, status, body_text)
+            # Track per-path consecutive failures (body-independent)
+            pk = (method.upper(), (path or "").rstrip("/"))
+            path_fail_streak[pk] = path_fail_streak.get(pk, 0) + 1
+            if path_fail_streak[pk] >= 3:
+                log_event(
+                    "ERROR", "path_fail_streak",
+                    step=step, method=method, path=path, streak=path_fail_streak[pk],
+                )
         else:
             log_event("INFO", "api_call", step=step, method=method, path=path, status=status)
+            # Reset failure streak on success
+            pk = (method.upper(), (path or "").rstrip("/"))
+            path_fail_streak[pk] = 0
 
         if is_error:
             feedback = (
@@ -815,7 +908,10 @@ def solve(
                     n_identical += 1
                 else:
                     break
-            if n_identical >= 5:
+            # Per-path streak (body-independent) — catches loops where body changes but path keeps failing
+            pk = (method.upper(), (path or "").rstrip("/"))
+            path_streak = path_fail_streak.get(pk, 0)
+            if n_identical >= 5 or path_streak >= 5:
                 log_event(
                     "ERROR", "hard_stop",
                     step=step, call_key=str(call_key), n_identical=n_identical,
@@ -830,7 +926,7 @@ def solve(
                     )
                 })
                 continue
-            elif n_identical >= 3:
+            elif n_identical >= 3 or path_streak >= 3:
                 log_event(
                     "WARNING", "error_loop",
                     step=step, call_key=str(call_key), n_identical=n_identical,
