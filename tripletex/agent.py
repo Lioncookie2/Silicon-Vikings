@@ -137,6 +137,8 @@ Rules:
                           NOTE: invoiceDateFrom AND invoiceDateTo are REQUIRED (400 without them).
                           NOTE: do NOT use "dueDate" in fields — it is NOT a field on InvoiceDTO (400 Illegal field).
                             Use invoiceDueDate if you need the due date column.
+                          NOTE: do NOT use amountOutstandingCurrency or other non-InvoiceDTO names in `fields` (400).
+                            Use fields:"*" to see all columns, or GET /invoice/{id}?fields=* for one invoice.
                           Default range: use year-start to today (both provided in context as TODAY and YEAR_START).
                           OVERDUE SEARCH: If the task mentions an overdue, unpaid, or late invoice and the
                             current-year search returns zero results, immediately retry with a wider range:
@@ -157,21 +159,19 @@ Rules:
                             and use an id from that list; do not invent ids from old responses.
 
 ### Payments (customer invoice — register incoming payment / German: Zahlung registrieren)
-  POST /invoice/{id}/payment  body: {paymentDate:"YYYY-MM-DD", paymentTypeId:X,
-                                      amount:AMOUNT, currency:{id:1}}
+  Tripletex documents the action as **/invoice/{id}/:payment** (colon before `payment`). The runtime tries, in order:
+  POST /payment, PUT /payment, POST /:payment, PUT /:payment (and PUT-first if you used PUT).
+  Body: {paymentDate:"YYYY-MM-DD", paymentTypeId:X, amount:AMOUNT, currency:{id:1}}
+                          — Optional: paidAmountCurrency (same as amount) per API release notes.
                           — Look up paymentTypeId via GET /invoice/paymentType (bank transfer is often id 2 or similar).
-                          — **amount**: use the amount to register (often invoice total **including** VAT if the task
-                            gives a gross figure; if the task says "without VAT" / "ohne MwSt.", compute gross from
-                            the invoice's VAT lines or use amountOutstanding from GET /invoice/{id}).
-                          — If POST returns **404** while GET /invoice/{id} returns 200, the integration may require
-                            **PUT** /invoice/{id}/payment with the **same** JSON body (the server retries PUT automatically
-                            when you use POST — or call PUT explicitly).
-  Fallback — record payment via POST /ledger/voucher if payment endpoint keeps failing:
-    postings must use **vatType 0%** («Ingen avgiftsbehandling») on **both** bank (1920) and kundefordringer (1500)
-    — those accounts are locked to VAT 0.
-    Include **customer:{id:CUSTOMER_ID}** on postings that hit account 1500 (and typically on the bank line too if
-    validation requires it) — 422 «Kunde mangler» means add customer to the posting(s).
-    Example pattern: debit 1920 (bank), credit 1500 (AR), same absolute amount, vatType 0% on each line.
+                          — **amount**: prefer **amountOutstanding** / totals from GET /invoice/{id}?fields=*
+                            (do not invent field names like amountOutstandingCurrency in `fields` filter).
+                            If the task says "ohne MwSt." / ex-VAT, still pay the **full** open balance the API returns.
+  Fallback — record payment via POST /ledger/voucher **only** if all payment URLs return 404:
+    **Exactly two lines**: debit **1920** (bank), credit **1500** (kundefordringer). **vatType 0%** on BOTH.
+    Do **NOT** post to **1600** (utgående MVA) or **2708** (inngående MVA) for a payment — those are wrong; payment
+    clears AR against bank without re-booking VAT.
+    Include **customer:{id}** on **both** postings. Same absolute amount (e.g. debit 1920 +amount, credit 1500 -amount).
 
 ### Reminder fees / overdue invoice handling
   When the task asks to "post a reminder fee", "purregebyr", "inkassogebyr", or any late fee
@@ -425,10 +425,10 @@ Rules:
     for supplier/AP credit lines unless the task names another payable account. If using amountGross,
     set amountGrossCurrency to the same value. For custom dimensions, use /ledger/accountingDimensionName
     + /ledger/accountingDimensionValue + freeAccountingDimension1/2/3 on postings (see section above).
-22. Registering **customer invoice payment**: prefer POST /invoice/{id}/payment (PUT is auto-tried on 404).
-    For **ledger/voucher** payment fallback: bank 1920 + kundefordringer 1500 both need **MVA 0%**; add
-    **customer:{id}** on postings or you get «Kunde mangler». Match payment **amount** to invoice outstanding
-    (task «ohne MwSt.» = ex-VAT — use GET /invoice/{id} fields for amountOutstanding / totals)."""
+22. Registering **customer invoice payment**: use POST or PUT on /invoice/{id}/payment **or** /invoice/{id}/:payment
+    (server tries all combinations). For **ledger/voucher** fallback: **only** 1920↔1500, **MVA 0%** on both lines,
+    **customer on both lines**. Never use **1600** or **2708** for payment vouchers.
+    In GET /invoice `fields`, never use illegal names like amountOutstandingCurrency — use * or valid InvoiceDTO fields."""
 
 
 # ── LLM backends ─────────────────────────────────────────────────────────────
@@ -547,6 +547,40 @@ def _sanitize_employee_body(
     return {**body, "userType": "STANDARD_USER"}
 
 
+def _execute_invoice_payment(
+    client: TripletexClient,
+    method: str,
+    path: str,
+    body: dict[str, Any],
+) -> _requests.Response | None:
+    """Tripletex OpenAPI uses /invoice/{id}/:payment; many proxies use /invoice/{id}/payment.
+    Try both path variants with POST and PUT until one returns non-404."""
+    p_norm = (path or "").rstrip("/")
+    m = re.fullmatch(r"/invoice/(\d+)(?:/payment|/:payment)", p_norm)
+    if not m:
+        return None
+    inv_id = m.group(1)
+    urls = [f"/invoice/{inv_id}/payment", f"/invoice/{inv_id}/:payment"]
+    attempts: list[tuple[str, str]] = []
+    if method.upper() == "POST":
+        for u in urls:
+            attempts.extend([(u, "POST"), (u, "PUT")])
+    else:
+        for u in urls:
+            attempts.extend([(u, "PUT"), (u, "POST")])
+    last: _requests.Response | None = None
+    seen: set[tuple[str, str]] = set()
+    for u, verb in attempts:
+        key = (u, verb)
+        if key in seen:
+            continue
+        seen.add(key)
+        last = client.post(u, json=body) if verb == "POST" else client.put(u, json=body)
+        if last.status_code != 404:
+            return last
+    return last
+
+
 def _assign_posting_rows(body: dict[str, Any] | None, path: str) -> dict[str, Any] | None:
     """Assign 1-based row numbers to postings in /ledger/voucher calls.
     Tripletex row 0 is system-generated; when row is missing the API defaults to 0 → 422.
@@ -579,18 +613,15 @@ def _execute_call(
     body = _assign_posting_rows(body, path)
     body = _sanitize_employee_body(body, method, path)
 
+    if isinstance(body, dict) and method in ("POST", "PUT"):
+        pay = _execute_invoice_payment(client, method, path, body)
+        if pay is not None:
+            return pay
+
     if method == "GET":
         return client.get(path, params=params)
     elif method == "POST":
-        resp = client.post(path, json=body)
-        # Tripletex OpenAPI documents invoice payment as /invoice/{id}/:payment; some stacks
-        # route this as PUT /invoice/{id}/payment — POST can return 404 while PUT succeeds.
-        p_norm = (path or "").rstrip("/")
-        if resp.status_code == 404 and body is not None and re.fullmatch(
-            r"/invoice/\d+/payment", p_norm
-        ):
-            return client.put(path, json=body)
-        return resp
+        return client.post(path, json=body)
     elif method == "PUT":
         return client.put(path, json=body)
     elif method == "DELETE":
@@ -997,13 +1028,17 @@ def solve(
                         "kundefordringer (1500) — and usually on the bank line (1920) too if validation requires it. "
                         "Use the customer id from GET /customer."
                     )
-            if status == 404 and method.upper() == "POST" and re.search(
-                r"/invoice/\d+/payment", p_low
+                if "1600" in str(body_text) or "utgående merverdiavgift" in bt:
+                    feedback += (
+                        "\n\nHINT: Recording a **payment** is NOT a VAT posting — do NOT use account 1600 or 2708. "
+                        "Use only **1920 (bank)** and **1500 (AR)** with **vatType 0%** on both lines + customer:{id}."
+                    )
+            if status == 404 and method.upper() in ("POST", "PUT") and re.search(
+                r"/invoice/\d+/(?:payment|:payment)", p_low
             ):
                 feedback += (
-                    "\n\nHINT: POST /invoice/{id}/payment returned 404 — try PUT /invoice/{id}/payment with the "
-                    "same JSON body. If still failing, use POST /ledger/voucher: debit 1920, credit 1500, "
-                    "vatType 0% on both lines, customer:{id} on each posting."
+                    "\n\nHINT: All /invoice/{id}/payment and /:payment variants returned 404 — use POST /ledger/voucher "
+                    "with exactly two lines: debit 1920, credit 1500, vatType 0% on BOTH, customer:{id} on BOTH."
                 )
             if status == 422 and method.upper() == "POST" and p_low.rstrip("/").endswith("/employee"):
                 feedback += (
@@ -1028,6 +1063,14 @@ def solve(
                 feedback += (
                     "\n\nHINT: GET /invoice `fields` must use only InvoiceDTO field names. "
                     "Remove dueDate — use invoiceDueDate instead (or omit fields filter)."
+                )
+            if status == 400 and method.upper() == "GET" and "/invoice" in p_low and (
+                "amountoutstandingcurrency" in str(body_text).lower()
+                or "does not match a field" in str(body_text).lower()
+            ):
+                feedback += (
+                    "\n\nHINT: Remove invalid `fields` entries (e.g. amountOutstandingCurrency is not on InvoiceDTO). "
+                    "Use fields=\"*\" or GET /invoice/{id}?fields=* for one invoice."
                 )
             if status == 404 and method.upper() == "PUT" and "/invoice/" in p_low and "/send" in p_low:
                 feedback += (
