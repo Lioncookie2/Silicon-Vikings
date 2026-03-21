@@ -157,7 +157,10 @@ def _try_pay_invoice(
         "amount": amount,
         "currency": {"id": 1},
     }
-    resp = client.post(f"/invoice/{inv_id}/payment", json=body)
+    path = f"/invoice/{inv_id}/payment"
+    resp = client.post(path, json=body)
+    if resp.status_code == 404:
+        resp = client.put(path, json=body)
     if resp.status_code in (200, 201):
         print(f"[task_handler:invoices] registered payment {amount} on invoice {inv_id} (1 write call)")
         return True

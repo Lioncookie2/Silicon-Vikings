@@ -156,9 +156,22 @@ Rules:
                           If 404: the invoice id does not exist in this company — GET /invoice with dates first
                             and use an id from that list; do not invent ids from old responses.
 
-### Payments
-  POST /invoice/{id}/payment  body: {paymentDate:"YYYY-MM-DD", paymentTypeId:2,
-                                      amount:X, currency:{id:1}}
+### Payments (customer invoice — register incoming payment / German: Zahlung registrieren)
+  POST /invoice/{id}/payment  body: {paymentDate:"YYYY-MM-DD", paymentTypeId:X,
+                                      amount:AMOUNT, currency:{id:1}}
+                          — Look up paymentTypeId via GET /invoice/paymentType (bank transfer is often id 2 or similar).
+                          — **amount**: use the amount to register (often invoice total **including** VAT if the task
+                            gives a gross figure; if the task says "without VAT" / "ohne MwSt.", compute gross from
+                            the invoice's VAT lines or use amountOutstanding from GET /invoice/{id}).
+                          — If POST returns **404** while GET /invoice/{id} returns 200, the integration may require
+                            **PUT** /invoice/{id}/payment with the **same** JSON body (the server retries PUT automatically
+                            when you use POST — or call PUT explicitly).
+  Fallback — record payment via POST /ledger/voucher if payment endpoint keeps failing:
+    postings must use **vatType 0%** («Ingen avgiftsbehandling») on **both** bank (1920) and kundefordringer (1500)
+    — those accounts are locked to VAT 0.
+    Include **customer:{id:CUSTOMER_ID}** on postings that hit account 1500 (and typically on the bank line too if
+    validation requires it) — 422 «Kunde mangler» means add customer to the posting(s).
+    Example pattern: debit 1920 (bank), credit 1500 (AR), same absolute amount, vatType 0% on each line.
 
 ### Reminder fees / overdue invoice handling
   When the task asks to "post a reminder fee", "purregebyr", "inkassogebyr", or any late fee
@@ -411,7 +424,11 @@ Rules:
     (read validationMessages — «låst til mva-kode 0» → use 0% vatType id). Use **2400** (leverandørgjeld)
     for supplier/AP credit lines unless the task names another payable account. If using amountGross,
     set amountGrossCurrency to the same value. For custom dimensions, use /ledger/accountingDimensionName
-    + /ledger/accountingDimensionValue + freeAccountingDimension1/2/3 on postings (see section above)."""
+    + /ledger/accountingDimensionValue + freeAccountingDimension1/2/3 on postings (see section above).
+22. Registering **customer invoice payment**: prefer POST /invoice/{id}/payment (PUT is auto-tried on 404).
+    For **ledger/voucher** payment fallback: bank 1920 + kundefordringer 1500 both need **MVA 0%**; add
+    **customer:{id}** on postings or you get «Kunde mangler». Match payment **amount** to invoice outstanding
+    (task «ohne MwSt.» = ex-VAT — use GET /invoice/{id} fields for amountOutstanding / totals)."""
 
 
 # ── LLM backends ─────────────────────────────────────────────────────────────
@@ -565,7 +582,15 @@ def _execute_call(
     if method == "GET":
         return client.get(path, params=params)
     elif method == "POST":
-        return client.post(path, json=body)
+        resp = client.post(path, json=body)
+        # Tripletex OpenAPI documents invoice payment as /invoice/{id}/:payment; some stacks
+        # route this as PUT /invoice/{id}/payment — POST can return 404 while PUT succeeds.
+        p_norm = (path or "").rstrip("/")
+        if resp.status_code == 404 and body is not None and re.fullmatch(
+            r"/invoice/\d+/payment", p_norm
+        ):
+            return client.put(path, json=body)
+        return resp
     elif method == "PUT":
         return client.put(path, json=body)
     elif method == "DELETE":
@@ -966,6 +991,20 @@ def solve(
                         "\n\nHINT: amountGross and amountGrossCurrency must be equal on each posting. "
                         "Either set both to the same number or omit gross fields and use amountCurrency with vatType."
                     )
+                if "kunde mangler" in bt or ("customer" in bt and "mangler" in bt):
+                    feedback += (
+                        "\n\nHINT: For customer (AR) payment vouchers, add customer:{id:X} to postings on "
+                        "kundefordringer (1500) — and usually on the bank line (1920) too if validation requires it. "
+                        "Use the customer id from GET /customer."
+                    )
+            if status == 404 and method.upper() == "POST" and re.search(
+                r"/invoice/\d+/payment", p_low
+            ):
+                feedback += (
+                    "\n\nHINT: POST /invoice/{id}/payment returned 404 — try PUT /invoice/{id}/payment with the "
+                    "same JSON body. If still failing, use POST /ledger/voucher: debit 1920, credit 1500, "
+                    "vatType 0% on both lines, customer:{id} on each posting."
+                )
             if status == 422 and method.upper() == "POST" and p_low.rstrip("/").endswith("/employee"):
                 feedback += (
                     "\n\nHINT: userType must be a string: \"STANDARD_USER\" (default), \"EMPLOYEE\", or \"ADMINISTRATOR\". "
