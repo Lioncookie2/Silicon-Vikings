@@ -334,7 +334,8 @@ def _process_files(files: list[dict[str, str]], workdir: Path) -> str:
             raw = base64.b64decode(content_b64)
         except Exception:
             continue
-        path = workdir / name
+        path = workdir / Path(name).name  # strip any subdirectory from filename
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(raw)
 
         ext = Path(name).suffix.lower()
