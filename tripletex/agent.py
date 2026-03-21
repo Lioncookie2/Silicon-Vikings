@@ -59,9 +59,24 @@ Rules:
 ## Key Tripletex v2 endpoints
 
 ### Employees
-  POST /employee          body: {firstName, lastName, email, employeeNumber(optional)}
+  POST /employee          body: {firstName, lastName, email, employeeNumber}
+                          — employeeNumber: **integer**, must be **unique** in the company (if 422 "duplicate",
+                            increment or change the number). Read validationMessages for missing fields.
+                          — Optional: division:{id:X}, department:{id:Y} — GET /division and GET /department first
+                            when the task mentions avdeling/department.
+                          — Optional nested address: {addressLine1, postalCode, city}
   GET  /employee          params: {fields:"id,firstName,lastName,email", count:10}
-  PUT  /employee/{id}     body: partial update
+  GET  /division          params: {fields:"id,name", count:50}
+  PUT  /employee/{id}     body: {version:N, ...}  ← GET first for version when updating
+
+### Employee onboarding (tilbud, PDF, ny ansatt, stillingsprosent, lønn)
+  Typical sequence (adjust to validationMessages):
+  1. GET /department — resolve department id by name/number from the task/PDF
+  2. GET /division — if the task implies a division
+  3. POST /employee — create person; fix 422 before continuing
+  4. POST /employee/employment — {employee:{id}, startDate:"YYYY-MM-DD"}
+  5. POST /employee/employment/details — salary: annualSalary, percentageOfFullTimeEquivalent, remunerationType
+  6. Standard working hours may be part of employment details or require additional PUTs — follow API errors
 
 ### Roles (assign after creating employee)
   PUT /employee/{id}/employment/... — use employeeId link
@@ -104,7 +119,7 @@ Rules:
   GET  /product           params: {number:"7733", fields:"id,name,number,vatType", count:10}
                           — filter by product number to avoid repeating generic GET /product.
 
-### Invoices
+### Invoices (OUTGOING / sales only — to customers)
   GET  /invoice           params: {invoiceDateFrom:"YYYY-MM-DD", invoiceDateTo:"YYYY-MM-DD",
                                     fields:"id,invoiceNumber,customer,amountCurrency,invoiceDate,dueDate",
                                     count:100}
@@ -113,8 +128,11 @@ Rules:
   POST /invoice           body: {invoiceDate:"YYYY-MM-DD", invoiceDueDate:"YYYY-MM-DD",
                                   customer:{id:X}, orders:[{id:Y}]}
                           — Only ONE order id per invoice is supported; put all lines on that order first.
+                          — This endpoint is for **customer sales invoices** only. Valid keys are those in the API
+                            (customer, orders, dates, …). Do NOT add supplier fields, invoiceLines, or
+                            supplierInvoiceNumber here — 422 "unknown field" means wrong API or wrong object type.
   GET  /invoice/paymentType  params: {fields:"id,description", count:20}
-                          — if POST /invoice returns 422 about payment/bank, fetch valid payment types first.
+                          — if POST /invoice returns 422 about payment, try including paymentType:{id:…} from here.
   PUT  /invoice/{id}/send     — send invoice by email (no request body needed)
 
 ### Payments
@@ -182,8 +200,10 @@ Rules:
   Step 3: GET /ledger/account       — find account numbers (e.g. account 6300 for office services,
             params: {fields:"id,number,name", count:100}   2711 for input VAT, 2400 for accounts payable)
   Step 4: GET /ledger/vatType       — find correct VAT type by percentage
-  Step 5: POST /ledger/voucher      — create the accounting entry (bilag)
+  Step 5: GET /ledger/voucherType   — pick a voucher type id (required for POST)
+  Step 6: POST /ledger/voucher      — create the accounting entry (bilag)
             body: {
+              voucherType: { id: VOUCHER_TYPE_ID },
               date: "YYYY-MM-DD",
               description: "Invoice description",
               externalVoucherNumber: "INV-...",
@@ -198,7 +218,6 @@ Rules:
             }
   NOTE: amountGross is the gross amount including VAT. Tripletex calculates net/VAT split automatically.
   NOTE: /ledger/voucher GET requires dateFrom and dateTo (REQUIRED params).
-  NOTE: POST /ledger/voucher often requires voucherType:{id:X}. GET /ledger/voucherType first to pick the right type.
 
 ### Ledger review / correction (hovedbok, finn feil i bilag, rette posteringsfeil)
   When the task asks to FIND ERRORS, REVIEW vouchers, FIX wrong account, REMOVE duplicate bilag,
@@ -264,7 +283,8 @@ Rules:
 6. Minimize write calls — every unnecessary POST/PUT/DELETE reduces your score.
 7. GET calls are free — use them to look up IDs or verify.
 8. When done, output {"action":"done","reasoning":"..."} — never loop unnecessarily.
-9. Never call the same endpoint more than twice in a row — you already have the data.
+9. Never call the same endpoint **with the same params/body** more than twice in a row.
+   If you need another GET on the same path, change params (e.g. product number filter) so it is not identical.
    If you received a 200 response, extract the IDs from it and move to the next step.
 10. NEVER output {"action":"done"} at step 0 without making at least one API call.
     If you are unsure how to proceed, start by fetching the relevant entity (e.g. GET /employee).
@@ -280,6 +300,12 @@ Rules:
 14. On POST /invoice → 422: read validationMessages in the API response body exactly — do NOT invent reasons
     (e.g. "bank account") unless the error text says so. Retry with corrected fields, vatType on order lines,
     or GET /invoice/paymentType if payment-related.
+15. POST /invoice is ONLY for **outgoing customer invoices** (body: customer + orders). If validationMessages
+    mention unknown fields like invoiceLines or supplierInvoiceNumber, you are using the wrong API — use the
+    supplier + POST /ledger/voucher flow instead (see "Incoming invoices").
+16. POST /ledger/voucher for **new** vouchers requires voucherType:{id} from GET /ledger/voucherType.
+    For **hovedbok correction** tasks, prefer GET /ledger/posting + GET /ledger/voucher + PUT/DELETE — do not
+    spam POST /ledger/voucher without a voucherType.
 """
 
 
@@ -351,6 +377,25 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 # ── single API call execution ─────────────────────────────────────────────────
+
+def _call_signature(action: dict[str, Any]) -> tuple[str, str, str, str]:
+    """Stable key for loop detection — includes params/json so GET /product?number=A vs B differs."""
+    method = (action.get("method") or "GET").upper()
+    path = action.get("path") or "/"
+    params = action.get("params")
+    body = action.get("json")
+    p_s = (
+        json.dumps(params, sort_keys=True, ensure_ascii=False)
+        if isinstance(params, dict) and params
+        else ""
+    )
+    j_s = (
+        json.dumps(body, sort_keys=True, ensure_ascii=False)
+        if isinstance(body, dict) and body
+        else ""
+    )
+    return (method, path, p_s, j_s)
+
 
 def _execute_call(
     client: TripletexClient, action: dict[str, Any]
@@ -553,8 +598,26 @@ def solve(
                 f"API ERROR {status}:\n{resp_summary}\n"
                 "Read the error message carefully and fix the request."
             )
+            # Targeted hints (do not replace validationMessages — append context for the LLM)
+            p_low = (path or "").lower()
+            if status == 422 and method.upper() == "POST" and p_low.rstrip("/").endswith("/invoice"):
+                feedback += (
+                    "\n\nHINT: POST /invoice is for OUTGOING customer invoices (customer + orders). "
+                    "If errors mention unknown fields (invoiceLines, supplier, …), use supplier + "
+                    "POST /ledger/voucher instead."
+                )
+            if status == 422 and method.upper() == "POST" and (path or "").rstrip("/") == "/ledger/voucher":
+                feedback += (
+                    "\n\nHINT: POST /ledger/voucher usually needs voucherType:{id} from GET /ledger/voucherType. "
+                    "For hovedbok correction, search with GET /ledger/posting + GET /ledger/voucher, then PUT/DELETE."
+                )
+            if status == 422 and method.upper() == "POST" and p_low.rstrip("/").endswith("/employee"):
+                feedback += (
+                    "\n\nHINT: POST /employee needs unique employeeNumber (integer) and valid email. "
+                    "Read validationMessages field-by-field."
+                )
             # Also detect loops on error responses (e.g. repeated 404s / 422s)
-            call_key = (method.upper(), path)
+            call_key = _call_signature(action)
             recent_calls.append(call_key)
             # Count consecutive identical calls from the end
             n_identical = 0
@@ -591,7 +654,7 @@ def solve(
         else:
             feedback = f"API SUCCESS {status}:\n{resp_summary}"
             # Track successful calls for loop detection
-            call_key = (method.upper(), path)
+            call_key = _call_signature(action)
             recent_calls.append(call_key)
             if len(recent_calls) >= 3 and len(set(recent_calls[-3:])) == 1:
                 log_event("WARNING", "success_loop", step=step, call_key=str(call_key))

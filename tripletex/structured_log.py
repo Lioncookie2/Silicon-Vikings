@@ -88,6 +88,11 @@ def log_event(
         if k.lower() not in _SENSITIVE_KEYS:
             payload[k] = _sanitize(v)
 
+    # Richer default `message` so plain `gcloud run services logs read` shows text
+    # (not an empty line when the entry is stored as jsonPayload).
+    if rid:
+        payload["message"] = f"{message} [rid={rid[:8]}…]"
+
     print(json.dumps(payload, default=str, ensure_ascii=False), flush=True)
 
 
