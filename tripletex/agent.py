@@ -126,32 +126,30 @@ Rules:
 # ── LLM backends ─────────────────────────────────────────────────────────────
 
 def _call_gemini(messages: list[dict[str, str]]) -> str:
-    import google.generativeai as genai  # type: ignore
+    from google import genai  # type: ignore
+    from google.genai import types  # type: ignore
 
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
         raise RuntimeError("Set GEMINI_API_KEY or GOOGLE_API_KEY")
-    genai.configure(api_key=key)
+
     model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-    model = genai.GenerativeModel(
-        model_name,
-        system_instruction=SYSTEM_PROMPT,
-    )
-    # Build Gemini conversation from messages list (skip system)
-    history = []
-    last_user = None
+    client = genai.Client(api_key=key)
+
+    # Build contents list for google-genai SDK
+    contents: list[types.Content] = []
     for m in messages:
         role = "user" if m["role"] == "user" else "model"
-        if role == "user":
-            last_user = m["content"]
-        else:
-            if last_user:
-                history.append({"role": "user", "parts": [last_user]})
-                last_user = None
-            history.append({"role": "model", "parts": [m["content"]]})
-    # Start chat with history (all but last user msg)
-    chat = model.start_chat(history=history)
-    resp = chat.send_message(last_user or "continue")
+        contents.append(types.Content(role=role, parts=[types.Part(text=m["content"])]))
+
+    resp = client.models.generate_content(
+        model=model_name,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            temperature=0.1,
+        ),
+    )
     return resp.text or ""
 
 
@@ -301,13 +299,16 @@ def solve(
         {"role": "user", "content": initial_user}
     ]
 
+    print(f"[agent] starting agentic loop, max_steps={MAX_STEPS}")
+
     for step in range(MAX_STEPS):
+        print(f"[step {step}] calling LLM ({len(messages)} messages in context)")
         raw_llm = _llm_complete(messages)
 
         try:
             action = _extract_json(raw_llm)
         except (ValueError, json.JSONDecodeError) as e:
-            # Feed parse error back so LLM can self-correct
+            print(f"[step {step}] JSON parse error: {e} — feeding back to LLM")
             messages.append({"role": "assistant", "content": raw_llm})
             messages.append({
                 "role": "user",
@@ -319,11 +320,14 @@ def solve(
         messages.append({"role": "assistant", "content": json.dumps(action)})
 
         action_type = (action.get("action") or "call").lower()
+        print(f"[step {step}] action={action_type} method={action.get('method','')} path={action.get('path','')}")
 
         if action_type == "done":
+            print(f"[step {step}] agent done: {action.get('reasoning','')}")
             break
 
         if action_type != "call":
+            print(f"[step {step}] unknown action type: {action_type}")
             messages.append({
                 "role": "user",
                 "content": f"Unknown action type '{action_type}'. Use 'call' or 'done'."
@@ -334,6 +338,7 @@ def solve(
         try:
             resp = _execute_call(client, action)
         except Exception as e:
+            print(f"[step {step}] client error: {e}")
             messages.append({
                 "role": "user",
                 "content": f"CLIENT ERROR: {e}\nFix your action and try again."
@@ -352,6 +357,8 @@ def solve(
             "body": body_text,
         }, ensure_ascii=False)[:RESPONSE_TRUNCATE]
 
+        print(f"[step {step}] API {action.get('method','')} {action.get('path','')} → {status}")
+
         if status >= 400:
             feedback = (
                 f"API ERROR {status}:\n{resp_summary}\n"
@@ -361,3 +368,8 @@ def solve(
             feedback = f"API SUCCESS {status}:\n{resp_summary}"
 
         messages.append({"role": "user", "content": feedback})
+
+    else:
+        print(f"[agent] reached MAX_STEPS={MAX_STEPS} without done action")
+
+    print(f"[agent] finished after {min(step+1, MAX_STEPS)} steps")
