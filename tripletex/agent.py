@@ -246,7 +246,7 @@ Rules:
 ### Travel expenses
   POST /travelExpense      body: {
                              employee:{id:X},
-                             description:"purpose of the trip",
+                             title:"purpose of the trip",
                              travelDetails:{
                                departureDate:"YYYY-MM-DD",
                                returnDate:"YYYY-MM-DD",
@@ -258,7 +258,7 @@ Rules:
                                isCompensationFromRates:false
                              }
                            }
-                           NOTE: employee, description and travelDetails are required.
+                           NOTE: employee, title and travelDetails are required. Do NOT use "description" on the root object (it causes 422).
                            travelDetails.departureDate and returnDate must be valid dates.
   GET  /travelExpense      params: {fields:"id,description,employee", count:10}
   DELETE /travelExpense/{id}
