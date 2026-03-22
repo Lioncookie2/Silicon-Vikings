@@ -19,6 +19,7 @@ from .classifier import (
     CREATE_CUSTOMER,
     CREATE_DEPARTMENTS,
     CREATE_EMPLOYEE,
+    CREATE_ORDER,
     CREATE_PROJECT,
     CREATE_VOUCHER,
     EMPLOYEE_ONBOARDING,
@@ -30,6 +31,7 @@ from .departments import handle_department_batch_task
 from .employees import handle_create_employee
 from .invoices import handle_invoice_task
 from .projects import handle_create_project
+from .orders import handle_create_order
 from .vouchers import handle_create_voucher
 from ..tripletex_client import TripletexClient
 
@@ -75,6 +77,10 @@ def try_handle_deterministically(
 
     if task_type == CREATE_ACTIVITY:
         if handle_create_activity(prompt, client):
+            return True
+
+    if task_type == CREATE_ORDER:
+        if handle_create_order(prompt, client, today):
             return True
 
     if task_type == CREATE_VOUCHER:

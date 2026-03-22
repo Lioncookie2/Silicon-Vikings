@@ -17,6 +17,7 @@ CREATE_PROJECT = "create_project"
 CREATE_ACTIVITY = "create_activity"
 CREATE_VOUCHER = "create_voucher"
 SUPPLIER_INVOICE = "supplier_invoice"
+CREATE_ORDER = "create_order"
 INVOICE_PAYMENT = "invoice_payment"
 LEDGER_CORRECTION = "ledger_correction"
 UNKNOWN = "unknown"
@@ -177,15 +178,19 @@ def classify_task(prompt: str, file_context: str = "") -> str:
         return CREATE_VOUCHER
 
     if _matches_any(
-        (
-            r"\bopprett\b.*\baktivitet\b",
-            r"\bcreate\b.*\bactivity\b",
-            r"\bny aktivitet\b",
-            r"\btimesheet\b.*\bactivity\b",
-        ),
+        (r"\bopprett\b.*\baktivitet\b",
+         r"\bcreate\b.*\bactivity\b",
+         r"\bny aktivitet\b",
+         r"\btimesheet\b.*\bactivity\b",),
         t,
     ):
         return CREATE_ACTIVITY
+
+    if _matches_any(
+        (r"\bopprett\b.*\bordre\b", r"\bcreate\b.*\border\b", r"\bny ordre\b", r"\bopprett\b.*\border\b"),
+        t,
+    ):
+        return CREATE_ORDER
 
     # Analysis-only: analysis verbs without strong action verbs
     if _matches_any(_ANALYSIS_VERBS, t) and not _matches_any(_ACTION_VERBS, t):
