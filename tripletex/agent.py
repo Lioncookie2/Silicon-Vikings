@@ -32,7 +32,7 @@ from .task_handlers.activities import validate_activity_body
 from .tripletex_client import TripletexClient
 
 # ── constants ────────────────────────────────────────────────────────────────
-MAX_STEPS = 20              # hard cap — never loop forever
+MAX_STEPS = 6               # hard cap — never loop forever (reduced from 20 to fail faster)
 RESPONSE_TRUNCATE_GET = 4000   # GET list responses can be large — agent needs to see all IDs
 RESPONSE_TRUNCATE_WRITE = 800  # POST/PUT/DELETE only return {value:{id:X}}, so 800 is fine
 RESPONSE_TRUNCATE_ERROR = 2500  # non-422 errors / fallback cap when serialising API body for LLM
@@ -41,12 +41,12 @@ RESPONSE_TRUNCATE_ERROR_422 = 8000  # 422: prioritize full validationMessages in
 
 def _hard_stop_path_streak_limit() -> int:
     """Consecutive failures on same method+path (any body) before forced done. Override: TRIPLETEX_HARD_STOP_PATH_STREAK."""
-    raw = os.environ.get("TRIPLETEX_HARD_STOP_PATH_STREAK", "8").strip()
+    raw = os.environ.get("TRIPLETEX_HARD_STOP_PATH_STREAK", "3").strip()
     try:
         n = int(raw, 10)
-        return max(4, min(n, 50))
+        return max(2, min(n, 10))
     except ValueError:
-        return 8
+        return 3
 
 
 def _compact_error_body_for_llm(status: int, body_text: Any) -> Any:
