@@ -17,9 +17,11 @@ CREATE_PROJECT = "create_project"
 CREATE_ACTIVITY = "create_activity"
 CREATE_VOUCHER = "create_voucher"
 SUPPLIER_INVOICE = "supplier_invoice"
-CREATE_ORDER = "create_order"
-BANK_RECONCILIATION = "bank_reconciliation"
-INVOICE_PAYMENT = "invoice_payment"
+    CREATE_ORDER = "create_order"
+    CREATE_PAYROLL = "create_payroll"
+    CREATE_DIMENSIONS = "create_dimensions"
+    BANK_RECONCILIATION = "bank_reconciliation"
+    INVOICE_PAYMENT = "invoice_payment"
 LEDGER_CORRECTION = "ledger_correction"
 UNKNOWN = "unknown"
 
@@ -138,6 +140,18 @@ def classify_task(prompt: str, file_context: str = "") -> str:
         t,
     ):
         return BANK_RECONCILIATION
+
+    if _matches_any(
+        (r"\blønnskjøring\b", r"\bpayroll\b", r"\bgehaltsabrechnung\b", r"\bsalary\s*transaction\b"),
+        t,
+    ):
+        return CREATE_PAYROLL
+        
+    if _matches_any(
+        (r"\begen dimensjon\b", r"\bdimension comptable\b", r"\bdimensión contable\b", r"\baccounting dimension\b"),
+        t,
+    ):
+        return CREATE_DIMENSIONS
 
     # Employee onboarding (salary, employment, stillingsprosent)
     if _matches_any(

@@ -18,8 +18,10 @@ from .classifier import (
     CREATE_ACTIVITY,
     CREATE_CUSTOMER,
     CREATE_DEPARTMENTS,
+    CREATE_DIMENSIONS,
     CREATE_EMPLOYEE,
     CREATE_ORDER,
+    CREATE_PAYROLL,
     CREATE_PROJECT,
     CREATE_VOUCHER,
     BANK_RECONCILIATION,
@@ -33,8 +35,10 @@ from .employees import handle_create_employee
 from .invoices import handle_invoice_task
 from .projects import handle_create_project
 from .orders import handle_create_order
+from .payroll import handle_payroll
 from .vouchers import handle_create_voucher
 from .reconciliation import handle_bank_reconciliation
+from .dimensions import handle_dimensions
 from ..tripletex_client import TripletexClient
 
 __all__ = [
@@ -87,6 +91,14 @@ def try_handle_deterministically(
 
     if task_type == BANK_RECONCILIATION:
         if handle_bank_reconciliation(prompt, client, today, year_start, file_context):
+            return True
+
+    if task_type == CREATE_PAYROLL:
+        if handle_payroll(prompt, client, today):
+            return True
+
+    if task_type == CREATE_DIMENSIONS:
+        if handle_dimensions(prompt, client):
             return True
 
     if task_type == CREATE_VOUCHER:
