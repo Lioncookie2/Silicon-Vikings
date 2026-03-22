@@ -143,6 +143,11 @@ Rules:
   PUT  /customer/{id}     body: partial update
   NOTE: Use /customer for OUTGOING invoices (sales). For bills you RECEIVE from vendors, use /supplier.
 
+### Projects
+  GET /project            params: {name:"...", fields:"id,name", count:100}
+  POST /project           body: {name:"...", startDate:"YYYY-MM-DD", projectManager:{id:X}, customer:{id:Y}}
+  PUT /project/{id}       body: {version:N, ...}
+
 ### Suppliers (leverandører — vendors you buy FROM)
   POST /supplier          body: {name:"...", organizationNumber:"...", email(optional)}
   GET  /supplier          params: {name:"...", organizationNumber:"...",
@@ -327,10 +332,10 @@ Rules:
                  account:{id:EXPENSE_ACCOUNT_ID}, supplier:{id:SUPPLIER_ID},
                  vatType:{id:VAT_TYPE_ID}, amountGross:TOTAL_INCL_VAT},
                 {date:"YYYY-MM-DD", description:"Accounts payable",
-                 account:{id:PAYABLE_ACCOUNT_ID}, supplier:{id:SUPPLIER_ID},
-                 amountGross:-TOTAL_INCL_VAT}
+                 account:{id:ACCOUNTS_PAYABLE_ID}, supplier:{id:SUPPLIER_ID}, amountGross:-TOTAL_INCL_VAT}
               ]
             }
+            CRITICAL: NEVER include `row` or `guiRow` properties inside the `postings` objects when creating or updating a voucher. The API auto-generates them and will return a 422 error if you send them.
   CRITICAL: Do NOT include a "row" field in posting objects — row 0 is system-generated and causes 422.
             Omit "row" entirely from every posting object.
   NOTE: amountGross is the gross amount including VAT. Tripletex calculates net/VAT split automatically.
@@ -361,6 +366,7 @@ Rules:
      with wider count or dates — do NOT retry the same id more than once; pick another id from the fresh list.
   5. PUT /ledger/voucher/{id}?sendToLedger=true  body: {version:N, voucherType:{id:...}, date:..., description:...,
      postings:[...]}  — copy structure from GET in step 4; change only what the task requires (wrong account → new
+     account). CRITICAL: Strip the keys `row` and `guiRow` from ALL objects inside the `postings` array before you PUT or POST, otherwise you get a 422 error "Posteringene på rad er systemgenererte".
      account:{id}; wrong vatType → fix per line). **version** from GET is mandatory.
      **VAT per line**: system accounts like **2700, 2712, 2710, 2703** (MVA-kontoer) and many balance-sheet lines are
      **locked to mva-kode 0** («Ingen avgiftsbehandling»). Other accounts may be locked to **mva-kode 6** (e.g.
@@ -447,6 +453,7 @@ Rules:
 11. For ALL PUT requests: first GET the resource to obtain its current "version" number.
     Include version in the PUT body: {"version": N, ...other fields...}
     Without version, Tripletex returns 422.
+    Also, remove "row" and "guiRow" from inside the "postings" arrays when making updates.
 12. On 404 errors: assume wrong endpoint/path first.
     Do NOT call the same 404 endpoint again. Switch to a different documented endpoint.
 13. Tasks about reviewing or fixing the general ledger (hovedbok, bilag, posteringsfeil, "general ledger", "vouchers"):
@@ -455,17 +462,17 @@ Rules:
     `version` from GET to fix errors; avoid POST /ledger/voucher unless creating a genuinely new bilag. On 404 for
     GET/DELETE voucher, refresh the list once — do not retry the same wrong id. MVA lines: match each account's locked
     code via GET /ledger/vatType (0% vs «utenfor mva-loven» / code 6 — can differ per posting line).
-14. On POST /invoice → 422: read validationMessages exactly.
-    - "bankkontonummer" = the company has no bank account registered — this CANNOT be fixed via API.
-      Output {"action":"done","reasoning":"invoice creation blocked: company has no bank account (cannot fix via API)"}.
-    - "paymentType" = do NOT add paymentType as a top-level field on POST /invoice; it is not a valid field.
-    - Other 422: retry with corrected fields.
-15. POST /invoice is ONLY for **outgoing customer invoices** (body: customer + orders). If validationMessages
-    mention unknown fields like invoiceLines or supplierInvoiceNumber, you are using the wrong API — use the
-    supplier + POST /ledger/voucher flow instead (see "Incoming invoices").
-16. POST /ledger/voucher for **new** vouchers requires voucherType:{id} from GET /ledger/voucherType.
-    For **hovedbok correction** tasks, prefer GET /ledger/posting + GET /ledger/voucher + PUT/DELETE — do not
-    spam POST /ledger/voucher without a voucherType.
+  14. On POST /invoice → 422: read validationMessages exactly.
+      - "bankkontonummer" = the company has no bank account registered — this CANNOT be fixed via API.
+        Output {"action":"done","reasoning":"invoice creation blocked: company has no bank account (cannot fix via API)"}.
+      - "paymentType" = do NOT add paymentType as a top-level field on POST /invoice; it is not a valid field.
+      - Other 422: retry with corrected fields.
+  15. POST /invoice is ONLY for **outgoing customer invoices** (body: customer + orders). If validationMessages
+      mention unknown fields like invoiceLines or supplierInvoiceNumber, you are using the wrong API — use the
+      supplier + POST /ledger/voucher flow instead (see "Incoming invoices").
+  16. POST /ledger/voucher for **new** vouchers requires voucherType:{id} from GET /ledger/voucherType.
+      For **hovedbok correction** tasks, prefer GET /ledger/posting + GET /ledger/voucher + PUT/DELETE — do not
+      spam POST /ledger/voucher without a voucherType.
 17. POST /employee: userType is a **string enum** — send `"userType": "STANDARD_USER"` directly.
     Do NOT send `{id:X}`, do NOT call GET /employee/userType (that endpoint does not exist).
     Do NOT use dot notation in `fields` param — use parentheses for nested fields.
@@ -724,6 +731,14 @@ def _validate_write_call(
     """
     m = method.upper()
     p_norm = (path or "").rstrip("/")
+
+    # Protect against system-generated row fields
+    if p_norm.startswith("/ledger/voucher"):
+        if body and "postings" in body and isinstance(body["postings"], list):
+            for posting in body["postings"]:
+                if isinstance(posting, dict):
+                    posting.pop("row", None)
+                    posting.pop("guiRow", None)
 
     if m == "PUT":
         # Do not require version for action endpoints that just perform an operation,
