@@ -1,0 +1,12 @@
+{
+  "request_id": "14f7a118-6c81-432d-877c-8326e73fae9b",
+  "record_count": 17,
+  "uploaded_at": "2026-03-22T11:25:44.354244+00:00",
+  "outcome": "agent_done",
+  "steps_used": 4,
+  "api_error_count": 0,
+  "task_preview": "Créez trois départements dans Tripletex : \"Administrasjon\", \"IT\" et \"Utvikling\".",
+  "had_max_steps": false,
+  "last_error_path": "",
+  "last_error_status": 0
+}

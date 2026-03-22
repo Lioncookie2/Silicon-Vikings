@@ -1,0 +1,12 @@
+{
+  "request_id": "4fa77205-6838-4171-b776-b0e52d4bb7a3",
+  "record_count": 29,
+  "uploaded_at": "2026-03-22T11:29:36.776872+00:00",
+  "outcome": "agent_done",
+  "steps_used": 8,
+  "api_error_count": 1,
+  "task_preview": "Fixez un prix forfaitaire de 365350 NOK sur le projet \"Intégration CRM\" pour Colline SARL (nº org. 894562234). Le chef de projet est Adam Thomas (adam.thomas@example.org). Facturez au client 75 % du p",
+  "had_max_steps": false,
+  "last_error_path": "/invoice",
+  "last_error_status": 422
+}

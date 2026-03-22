@@ -1,0 +1,12 @@
+{
+  "request_id": "d6f14886-a358-4896-a89d-a14ea11d223d",
+  "record_count": 47,
+  "uploaded_at": "2026-03-22T11:26:55.700489+00:00",
+  "outcome": "agent_done",
+  "steps_used": 12,
+  "api_error_count": 5,
+  "task_preview": "Vi trenger Whiteboard fra denne kvitteringen bokfort pa avdeling HR. Bruk riktig utgiftskonto basert pa kjopet, og sorg for korrekt MVA-behandling.",
+  "had_max_steps": false,
+  "last_error_path": "/ledger/voucher",
+  "last_error_status": 422
+}
