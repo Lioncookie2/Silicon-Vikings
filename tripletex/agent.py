@@ -208,10 +208,9 @@ Rules:
 ### Payments (customer invoice — register incoming payment / German: Zahlung registrieren)
   Tripletex documents the action as **/invoice/{id}/:payment** (colon before `payment`). The runtime tries, in order:
   POST /payment, PUT /payment, POST /:payment, PUT /:payment (and PUT-first if you used PUT).
-  Body: {paymentDate:"YYYY-MM-DD", paymentTypeId:X, amount:AMOUNT, currency:{id:1}}
-                          — Optional: paidAmountCurrency (same as amount) per API release notes.
+  Body: {paymentDate:"YYYY-MM-DD", paymentTypeId:X, paidAmount:AMOUNT, currency:{id:1}}
                           — Look up paymentTypeId via GET /invoice/paymentType (bank transfer is often id 2 or similar).
-                          — **amount**: prefer **amountOutstanding** / totals from GET /invoice/{id}?fields=*
+                          — **paidAmount**: prefer **amountOutstanding** / totals from GET /invoice/{id}?fields=*
                             (do not invent field names like amountOutstandingCurrency in `fields` filter).
                             If the task says "ohne MwSt." / ex-VAT, still pay the **full** open balance the API returns.
   Fallback — record payment via POST /ledger/voucher **only** if all payment URLs return 404:
@@ -714,7 +713,10 @@ def _validate_write_call(
     p_norm = (path or "").rstrip("/")
 
     if m == "PUT":
-        if not isinstance(body, dict) or "version" not in body:
+        # Do not require version for action endpoints that just perform an operation,
+        # rather than updating the resource representation itself.
+        is_action_endpoint = p_norm.endswith("/:payment") or p_norm.endswith("/payment") or p_norm.endswith("/send")
+        if not is_action_endpoint and (not isinstance(body, dict) or "version" not in body):
             return (
                 "For ALL PUT requests, you MUST include the current 'version' number "
                 "in the JSON body (e.g., {\"version\": 2, ...}). "
