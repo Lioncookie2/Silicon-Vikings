@@ -13,18 +13,18 @@ Usage in solve():
 from __future__ import annotations
 
 from .activities import handle_create_activity
-    from .classifier import (
-        ANALYSIS_ONLY,
-        CREATE_ACTIVITY,
-        CREATE_CUSTOMER,
-        CREATE_DEPARTMENTS,
-        CREATE_EMPLOYEE,
-        CREATE_PROJECT,
-        CREATE_VOUCHER,
-        EMPLOYEE_ONBOARDING,
-        INVOICE_PAYMENT,
-        classify_task,
-    )
+from .classifier import (
+    ANALYSIS_ONLY,
+    CREATE_ACTIVITY,
+    CREATE_CUSTOMER,
+    CREATE_DEPARTMENTS,
+    CREATE_EMPLOYEE,
+    CREATE_PROJECT,
+    CREATE_VOUCHER,
+    EMPLOYEE_ONBOARDING,
+    INVOICE_PAYMENT,
+    classify_task,
+)
 from .customers import handle_create_customer
 from .departments import handle_department_batch_task
 from .employees import handle_create_employee
