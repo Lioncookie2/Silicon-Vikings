@@ -170,10 +170,12 @@ Rules:
                           — always do this GET first when a task mentions a specific VAT rate (%)
 
 ### Orders
-  POST /order             body: {customer:{id:X}, orderDate:"YYYY-MM-DD", deliveryDate:"YYYY-MM-DD"}
+  POST /order             body: {customer:{id:X}, orderDate:"YYYY-MM-DD", deliveryDate:"YYYY-MM-DD", project:{id:Y}}
+                          — NOTE: Set `project` here on the order, NOT on the order lines!
   POST /order/orderline   body: {order:{id:Y}, product:{id:X}, count:1,
                                  unitPriceExcludingVatCurrency:N, vatType:{id:Z}}
                           — vatType per line when the task specifies different VAT % per product line.
+                          — DO NOT use `project` inside orderline. Project goes on the parent Order.
                             Resolve Z via GET /ledger/vatType (match percentage: 25, 15, 0).
                           For **sales** lines, pick an **outgoing / sales** VAT type (e.g. "utgående", "25%"),
                             NOT purchase/input VAT (e.g. "Fradrag inngående avgift") — that causes 422 on order lines.
@@ -398,9 +400,9 @@ Rules:
   1. GET /ledger/accountingDimensionName   params: {fields:"id,name,dimensionIndex", count:10}
      — see existing dimensions and free slots (index 1–3).
   2. POST /ledger/accountingDimensionName  body: {name:"Produktlinje", dimensionName:"Produktlinje"}  — creates next free slot (adjust fields per validationMessages if 422).
-  3. GET /ledger/accountingDimensionValue  params: {fields:"id,name,accountingDimensionName", count:50}
-  4. POST /ledger/accountingDimensionValue  body: {description:"Basis", accountingDimensionName:{id:DIMENSION_NAME_ID}}
-  5. POST /ledger/accountingDimensionValue  body: {description:"Avansert", accountingDimensionName:{id:SAME_ID}}
+  3. GET /ledger/accountingDimensionValue  params: {fields:"id,name,description,accountingDimensionName", count:50}
+  4. POST /ledger/accountingDimensionValue  body: {name:"Basis", accountingDimensionName:{id:DIMENSION_NAME_ID}}
+  5. POST /ledger/accountingDimensionValue  body: {name:"Avansert", accountingDimensionName:{id:SAME_ID}}
   When posting a voucher, attach the chosen value to each posting line using PostingDTO fields (writable since v2.72.05):
     freeAccountingDimension1:{id:VALUE_ID}   — use slot 1, 2, or 3 matching the dimensionIndex from step 1
     (or freeAccountingDimension2 / freeAccountingDimension3 for the other slots)
