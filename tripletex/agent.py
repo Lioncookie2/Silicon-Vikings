@@ -118,7 +118,7 @@ Rules:
                           — employeeNumber: **integer**, must be **unique** in the company.
                           — Optional: division:{id:X}, department:{id:Y} — GET /division and GET /department first.
                           — Optional nested address: {addressLine1, postalCode, city}
-  GET  /employee          params: {fields:"id,firstName,lastName,email", count:10}
+  GET  /employee          params: {fields:"id,firstName,lastName,email", count:100}
                           NOTE: do NOT use dot notation in fields (e.g. "userType.id") — use parentheses if
                           you need nested fields: e.g. fields="id,firstName,userType(id,name)"
   GET  /division          params: {fields:"id,name", count:50}
@@ -139,7 +139,7 @@ Rules:
 
 ### Customers (kjøpere — entities you sell TO)
   POST /customer          body: {name, email, isCustomer:true, phone(optional)}
-  GET  /customer          params: {name:"...", fields:"id,name,email", count:10}
+  GET  /customer          params: {name:"...", fields:"id,name,email", count:100}
   PUT  /customer/{id}     body: partial update
   NOTE: Use /customer for OUTGOING invoices (sales). For bills you RECEIVE from vendors, use /supplier.
 
@@ -155,7 +155,7 @@ Rules:
                                   priceExcludingVatCurrency, vatType:{id:X}}
                           — vatType is optional but use it when a specific VAT rate is mentioned.
                             Look up the correct vatType ID first with GET /ledger/vatType.
-  GET  /product           params: {fields:"id,name,number,priceExcludingVatCurrency,vatType", count:10}
+  GET  /product           params: {fields:"id,name,number,priceExcludingVatCurrency,vatType", count:100}
   PUT  /product/{id}      body: {version:N, ...fields to update...}
 
 ### VAT types
@@ -536,6 +536,7 @@ def _call_openai(messages: list[dict[str, str]]) -> str:
         model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         messages=openai_messages,
         temperature=0.1,
+        response_format={"type": "json_object"},
     )
     return r.choices[0].message.content or ""
 
@@ -711,6 +712,14 @@ def _validate_write_call(
     """
     m = method.upper()
     p_norm = (path or "").rstrip("/")
+
+    if m == "PUT":
+        if not isinstance(body, dict) or "version" not in body:
+            return (
+                "For ALL PUT requests, you MUST include the current 'version' number "
+                "in the JSON body (e.g., {\"version\": 2, ...}). "
+                "Do a GET request first to obtain the current version."
+            )
 
     if m == "GET" and p_norm == "/employee" and isinstance(params, dict):
         fields = params.get("fields")
@@ -1340,7 +1349,12 @@ def solve(
             pk = (method.upper(), (path or "").rstrip("/"))
             path_streak = path_fail_streak.get(pk, 0)
             path_hard = _hard_stop_path_streak_limit()
-            identical_hard = n_identical >= 5
+            
+            # Detect repeated loops on identical requests or GET/DELETE 404s
+            identical_hard = n_identical >= 3
+            if not identical_hard and status == 404 and method.upper() in ("GET", "DELETE") and n_identical >= 2:
+                identical_hard = True
+                
             path_only_hard = not identical_hard and path_streak >= path_hard
             if identical_hard or path_only_hard:
                 run_stats["hard_stop_count"] += 1
@@ -1353,7 +1367,7 @@ def solve(
                 messages.append({"role": "user", "content": feedback})
                 if identical_hard:
                     hard_txt = (
-                        "HARD STOP: You have sent the **same** request 5 times in a row without success. "
+                        "HARD STOP: You have sent the **same** request repeatedly without success. "
                         "You MUST output {\"action\":\"done\",\"reasoning\":\"could not complete — same request failed repeatedly\"} RIGHT NOW. "
                         "Do NOT make any more API calls."
                     )
