@@ -11,9 +11,11 @@ from fastapi.responses import JSONResponse
 from .agent import solve
 from .run_artifacts import begin_run_artifact_recording, flush_run_artifacts
 from .structured_log import log_event, set_request_id
+from .dashboard import router as dashboard_router
 
 app = FastAPI(title="NM i AI — Tripletex Agent", version="1.0.0")
 
+app.include_router(dashboard_router)
 
 @app.get("/health")
 async def health() -> dict[str, str]:
