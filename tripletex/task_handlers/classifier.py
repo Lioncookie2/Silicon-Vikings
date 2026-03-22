@@ -17,8 +17,9 @@ CREATE_PROJECT = "create_project"
 CREATE_ACTIVITY = "create_activity"
 CREATE_VOUCHER = "create_voucher"
 SUPPLIER_INVOICE = "supplier_invoice"
-CREATE_ORDER = "create_order"
-INVOICE_PAYMENT = "invoice_payment"
+    CREATE_ORDER = "create_order"
+    BANK_RECONCILIATION = "bank_reconciliation"
+    INVOICE_PAYMENT = "invoice_payment"
 LEDGER_CORRECTION = "ledger_correction"
 UNKNOWN = "unknown"
 
@@ -131,6 +132,12 @@ def classify_task(prompt: str, file_context: str = "") -> str:
         t,
     ):
         return INVOICE_PAYMENT
+
+    if _matches_any(
+        (r"\bavstemming\b", r"\breconcile\b", r"\bbank statement\b", r"\bkontoutskrift\b", r"\bmatch\b.*\bpayments\b"),
+        t,
+    ):
+        return BANK_RECONCILIATION
 
     # Employee onboarding (salary, employment, stillingsprosent)
     if _matches_any(

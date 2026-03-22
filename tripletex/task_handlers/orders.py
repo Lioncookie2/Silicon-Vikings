@@ -22,6 +22,7 @@ class OrderExtractor(BaseModel):
     customer_name_hint: str = Field(description="The name of the customer the order is for")
     order_date: str | None = Field(default=None, description="The order date in YYYY-MM-DD")
     lines: list[OrderLineExtractor] = Field(description="The lines on the order")
+    create_invoice: bool = Field(default=False, description="True if the task also asks to convert the order to an invoice or invoice it")
 
 
 def _extract_order_data(prompt: str, today: str) -> OrderExtractor | None:
@@ -136,5 +137,20 @@ def handle_create_order(prompt: str, client: TripletexClient, today: str) -> boo
         if lr.status_code not in (200, 201):
             log_event("WARNING", "order_handler_line_failed", status=lr.status_code, text=lr.text[:200])
             success = False
+
+    # 3. Optionally create invoice from order
+    if success and extracted.create_invoice:
+        inv_body = {
+            "invoiceDate": today,
+            "customer": {"id": cust_id},
+            "orders": [{"id": order_id}]
+        }
+        ir = client.post("/invoice", json=inv_body)
+        if ir.status_code in (200, 201):
+            log_event("INFO", "order_handler_created_invoice", id=ir.json().get("value", {}).get("id"))
+        else:
+            log_event("WARNING", "order_handler_invoice_failed", status=ir.status_code, text=ir.text[:200])
+            # Even if invoice failed, the order was created
+            return False
 
     return success

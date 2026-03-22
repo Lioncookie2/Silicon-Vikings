@@ -22,6 +22,7 @@ from .classifier import (
     CREATE_ORDER,
     CREATE_PROJECT,
     CREATE_VOUCHER,
+    BANK_RECONCILIATION,
     EMPLOYEE_ONBOARDING,
     INVOICE_PAYMENT,
     classify_task,
@@ -33,6 +34,7 @@ from .invoices import handle_invoice_task
 from .projects import handle_create_project
 from .orders import handle_create_order
 from .vouchers import handle_create_voucher
+from .reconciliation import handle_bank_reconciliation
 from ..tripletex_client import TripletexClient
 
 __all__ = [
@@ -81,6 +83,10 @@ def try_handle_deterministically(
 
     if task_type == CREATE_ORDER:
         if handle_create_order(prompt, client, today):
+            return True
+
+    if task_type == BANK_RECONCILIATION:
+        if handle_bank_reconciliation(prompt, client, today, year_start, file_context):
             return True
 
     if task_type == CREATE_VOUCHER:
