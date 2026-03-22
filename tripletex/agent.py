@@ -603,7 +603,7 @@ def _sanitize_employee_body(
 
     - Missing userType: leave unchanged.
     - int → {\"id\": n}; dict with id: keep.
-    - Valid enum string: keep (fallback retries handle proxies that reject strings).
+    - Valid enum string: map to Tripletex's expected integer ID (e.g. 2 for STANDARD_USER).
     - Otherwise: drop userType so POST can succeed with server default."""
     if body is None:
         return body
@@ -618,8 +618,21 @@ def _sanitize_employee_body(
     if isinstance(ut, int):
         out["userType"] = {"id": int(ut)}
         return out
-    if isinstance(ut, str) and ut in _VALID_USER_TYPES:
-        return out
+    
+    # Map known string enums to standard Tripletex ID integers
+    # Typically 1 = ADMINISTRATOR, 2 = STANDARD_USER, 3 = EMPLOYEE
+    if isinstance(ut, str):
+        ut_upper = ut.upper()
+        if ut_upper == "ADMINISTRATOR":
+            out["userType"] = {"id": 1}
+            return out
+        elif ut_upper == "STANDARD_USER":
+            out["userType"] = {"id": 2}
+            return out
+        elif ut_upper == "EMPLOYEE":
+            out["userType"] = {"id": 3}
+            return out
+        
     out.pop("userType", None)
     return out
 
