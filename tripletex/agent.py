@@ -393,8 +393,8 @@ Rules:
      — see existing dimensions and free slots (index 1–3).
   2. POST /ledger/accountingDimensionName  body: {name:"Produktlinje", dimensionName:"Produktlinje"}  — creates next free slot (adjust fields per validationMessages if 422).
   3. GET /ledger/accountingDimensionValue  params: {fields:"id,name,accountingDimensionName", count:50}
-  4. POST /ledger/accountingDimensionValue  body: {name:"Basis", accountingDimensionName:{id:DIMENSION_NAME_ID}}
-  5. POST /ledger/accountingDimensionValue  body: {name:"Avansert", accountingDimensionName:{id:SAME_ID}}
+  4. POST /ledger/accountingDimensionValue  body: {description:"Basis", accountingDimensionName:{id:DIMENSION_NAME_ID}}
+  5. POST /ledger/accountingDimensionValue  body: {description:"Avansert", accountingDimensionName:{id:SAME_ID}}
   When posting a voucher, attach the chosen value to each posting line using PostingDTO fields (writable since v2.72.05):
     freeAccountingDimension1:{id:VALUE_ID}   — use slot 1, 2, or 3 matching the dimensionIndex from step 1
     (or freeAccountingDimension2 / freeAccountingDimension3 for the other slots)
@@ -622,16 +622,11 @@ def _sanitize_employee_body(
     # Map known string enums to standard Tripletex ID integers
     # Typically 1 = ADMINISTRATOR, 2 = STANDARD_USER, 3 = EMPLOYEE
     if isinstance(ut, str):
-        ut_upper = ut.upper()
-        if ut_upper == "ADMINISTRATOR":
-            out["userType"] = {"id": 1}
-            return out
-        elif ut_upper == "STANDARD_USER":
-            out["userType"] = {"id": 2}
-            return out
-        elif ut_upper == "EMPLOYEE":
-            out["userType"] = {"id": 3}
-            return out
+        # We drop string enums instead of guessing numeric IDs, because wrong IDs 
+        # (like 1, 2, 3) cause hard 422 errors. The Tripletex server defaults to
+        # STANDARD_USER anyway if the field is omitted.
+        out.pop("userType", None)
+        return out
         
     out.pop("userType", None)
     return out
