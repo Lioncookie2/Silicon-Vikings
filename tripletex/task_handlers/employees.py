@@ -1,11 +1,61 @@
-"""Deterministic employee create / onboarding flows."""
+"""Deterministic employee create / onboarding flows using LLM extraction."""
 from __future__ import annotations
 
+import json
+import os
 import re
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 from ..employee_post import execute_post_employee
 from ..structured_log import log_event
 from ..tripletex_client import TripletexClient
+
+
+class EmployeeExtractor(BaseModel):
+    first_name: str = Field(description="First name of the employee")
+    last_name: str = Field(description="Last name of the employee")
+    email: str | None = Field(default=None, description="Email address, if any")
+    date_of_birth: str | None = Field(default=None, description="Date of birth in YYYY-MM-DD format")
+    department_name_hint: str | None = Field(default=None, description="Name of the department they should belong to")
+    start_date: str | None = Field(default=None, description="Employment start date in YYYY-MM-DD")
+    annual_salary: float | None = Field(default=None, description="Annual salary in NOK")
+    percentage_fte: float | None = Field(default=None, description="Percentage of full time equivalent (e.g. 100 for 100%)")
+
+
+def _extract_employee_data(prompt: str, file_context: str, today: str) -> EmployeeExtractor | None:
+    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        return None
+
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=key)
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+
+        text_to_analyze = f"Prompt:\n{prompt}\n\nFile Context:\n{file_context}"
+
+        resp = client.models.generate_content(
+            model=model_name,
+            contents=text_to_analyze,
+            config=types.GenerateContentConfig(
+                system_instruction=f"Extract employee details. Today is {today}.",
+                temperature=0.1,
+                response_mime_type="application/json",
+                response_schema=EmployeeExtractor,
+            ),
+        )
+        if resp.text:
+            data = json.loads(resp.text)
+            return EmployeeExtractor.model_validate(data)
+    except Exception as e:
+        log_event("WARNING", "employee_llm_extract_failed", error=str(e))
+        pass
+
+    return None
 
 
 def _next_employee_number(client: TripletexClient) -> int:
@@ -148,47 +198,40 @@ def handle_create_employee(
     today: str,
     *,
     full_onboarding: bool = False,
+    file_context: str = "",
 ) -> bool:
     """
-    Deterministic create (and optional employment/salary) when fields parse cleanly.
-    Returns True if the handler completed successfully.
+    Deterministic create (and optional employment/salary) using LLM extraction.
     """
-    email = _parse_email(prompt)
-    name_pair = _parse_name(prompt)
-    if not email:
-        log_event("INFO", "employee_handler_skip", reason="no_email")
+    extracted = _extract_employee_data(prompt, file_context, today)
+    if not extracted:
         return False
-    first = last = ""
-    if name_pair:
-        first, last = name_pair
-    if not first or not last:
-        local = email.split("@")[0]
-        parts = re.split(r"[._-]+", local)
-        if len(parts) >= 2:
-            first, last = parts[0].title(), parts[-1].title()
-        else:
-            first, last = (local[:1].upper() + local[1:32]) if local else "X", "Employee"
 
-    dept_hint = _parse_department_hint(prompt)
+    first = extracted.first_name
+    last = extracted.last_name
+    email = extracted.email or f"{first.lower()}.{last.lower()}@example.invalid"
+
     dept_id: int | None = None
-    if dept_hint:
-        dept_id = _resolve_department_id(client, dept_hint)
+    if extracted.department_name_hint:
+        dept_id = _resolve_department_id(client, extracted.department_name_hint)
 
     emp_no = _next_employee_number(client)
-    body: dict = {
+    body: dict[str, Any] = {
         "firstName": first,
         "lastName": last,
-        "email": email or f"{first.lower()}.{last.lower()}@example.invalid",
+        "email": email,
         "employeeNumber": emp_no,
         "userType": "STANDARD_USER",
     }
     if dept_id is not None:
         body["department"] = {"id": dept_id}
+    if extracted.date_of_birth:
+        body["dateOfBirth"] = extracted.date_of_birth
 
     log_event("INFO", "employee_handler_post", employeeNumber=emp_no, has_department=dept_id is not None)
     resp = execute_post_employee(client, "/employee", body)
     if resp.status_code not in (200, 201):
-        log_event("WARNING", "employee_handler_post_failed", status=resp.status_code)
+        log_event("WARNING", "employee_handler_post_failed", status=resp.status_code, text=resp.text[:200])
         return False
 
     try:
@@ -198,23 +241,20 @@ def handle_create_employee(
         log_event("WARNING", "employee_handler_no_id")
         return False
 
-    start = _parse_iso_or_nor_date(prompt) or today
-    if not full_onboarding:
+    start = extracted.start_date or today
+    if not full_onboarding and not extracted.annual_salary and not extracted.percentage_fte:
         log_event("INFO", "employee_handler_ok", employee_id=emp_id, onboarding=False)
         return True
 
-    salary = _parse_annual_salary(prompt)
-    pct = _parse_percentage_fte(prompt)
-    if salary is None and pct is None:
-        log_event("INFO", "employee_handler_ok", employee_id=emp_id, onboarding=False)
-        return True
+    salary = extracted.annual_salary
+    pct = extracted.percentage_fte
 
     er = client.post(
         "/employee/employment",
         json={"employee": {"id": emp_id}, "startDate": start},
     )
     if er.status_code not in (200, 201):
-        log_event("WARNING", "employee_handler_employment_failed", status=er.status_code)
+        log_event("WARNING", "employee_handler_employment_failed", status=er.status_code, text=er.text[:200])
         return False
 
     try:
@@ -224,7 +264,7 @@ def handle_create_employee(
         log_event("WARNING", "employee_handler_no_employment_id")
         return False
 
-    detail_body: dict = {
+    detail_body: dict[str, Any] = {
         "employment": {"id": employment_id},
         "date": start,
         "remunerationType": "MONTHLY_WAGE",
@@ -235,7 +275,8 @@ def handle_create_employee(
 
     dr = client.post("/employee/employment/details", json=detail_body)
     if dr.status_code not in (200, 201):
-        log_event("WARNING", "employee_handler_details_failed", status=dr.status_code)
+        log_event("WARNING", "employee_handler_details_failed", status=dr.status_code, text=dr.text[:200])
         return False
+        
     log_event("INFO", "employee_handler_ok", employee_id=emp_id, onboarding=True)
     return True

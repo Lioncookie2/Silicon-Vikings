@@ -63,10 +63,10 @@ def try_handle_deterministically(
         return True
 
     if task_type == EMPLOYEE_ONBOARDING:
-        if handle_create_employee(prompt, client, today, full_onboarding=True):
+        if handle_create_employee(prompt, client, today, full_onboarding=True, file_context=file_context):
             return True
     elif task_type == CREATE_EMPLOYEE:
-        if handle_create_employee(prompt, client, today, full_onboarding=False):
+        if handle_create_employee(prompt, client, today, full_onboarding=False, file_context=file_context):
             return True
 
     if task_type == CREATE_CUSTOMER:

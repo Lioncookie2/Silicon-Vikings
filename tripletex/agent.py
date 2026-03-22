@@ -32,7 +32,7 @@ from .task_handlers.activities import validate_activity_body
 from .tripletex_client import TripletexClient
 
 # ── constants ────────────────────────────────────────────────────────────────
-MAX_STEPS = 6               # hard cap — never loop forever (reduced from 20 to fail faster)
+MAX_STEPS = 20              # High cap to allow ReAct loop to debug 422s and eventually succeed (higher score is better)
 RESPONSE_TRUNCATE_GET = 4000   # GET list responses can be large — agent needs to see all IDs
 RESPONSE_TRUNCATE_WRITE = 800  # POST/PUT/DELETE only return {value:{id:X}}, so 800 is fine
 RESPONSE_TRUNCATE_ERROR = 2500  # non-422 errors / fallback cap when serialising API body for LLM
