@@ -68,7 +68,7 @@ def main() -> None:
         if alt.is_file():
             weights_path = alt
         else:
-            raise FileNotFoundError(f"Weights not found: {args.weights} (also tried {alt})")
+            pass # let ultralytics auto-download
 
     if torch.cuda.is_available():
         device = "0"

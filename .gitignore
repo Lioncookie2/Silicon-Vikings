@@ -29,3 +29,11 @@ astar/analysis/plots/
 # OS
 .DS_Store
 __MACOSX/
+
+# Ignore large files and datasets
+data/
+*.pt
+*.onnx
+submission 2/
+
+norgesgruppen/experiments/marathon/

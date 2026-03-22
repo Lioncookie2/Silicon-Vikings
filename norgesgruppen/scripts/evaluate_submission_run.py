@@ -96,7 +96,7 @@ def main() -> None:
     out_json = args.output_json or (root / "runs" / "eval" / "predictions_run_py.json")
     out_json.parent.mkdir(parents=True, exist_ok=True)
 
-    cmd = [
+    import os; env = os.environ.copy(); env["OMP_NUM_THREADS"] = "1"; env["KMP_DUPLICATE_LIB_OK"] = "TRUE"; cmd = [
         sys.executable,
         str(run_py),
         "--input",
@@ -114,7 +114,7 @@ def main() -> None:
         cmd.append("--tta")
 
     print("Kjører:", " ".join(cmd))
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if proc.returncode != 0:
         print(proc.stdout)
         print(proc.stderr, file=sys.stderr)
