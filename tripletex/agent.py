@@ -391,7 +391,7 @@ Rules:
   Flow when the task asks to create a dimension named X with values A, B, …:
   1. GET /ledger/accountingDimensionName   params: {fields:"id,name,dimensionIndex", count:10}
      — see existing dimensions and free slots (index 1–3).
-  2. POST /ledger/accountingDimensionName  body: {name:"Produktlinje"}  — creates next free slot (adjust fields per validationMessages if 422).
+  2. POST /ledger/accountingDimensionName  body: {name:"Produktlinje", dimensionName:"Produktlinje"}  — creates next free slot (adjust fields per validationMessages if 422).
   3. GET /ledger/accountingDimensionValue  params: {fields:"id,name,accountingDimensionName", count:50}
   4. POST /ledger/accountingDimensionValue  body: {name:"Basis", accountingDimensionName:{id:DIMENSION_NAME_ID}}
   5. POST /ledger/accountingDimensionValue  body: {name:"Avansert", accountingDimensionName:{id:SAME_ID}}
@@ -636,6 +636,11 @@ def _execute_invoice_payment(
     m = re.fullmatch(r"/invoice/(\d+)(?:/payment|/:payment)", p_norm)
     if not m:
         return None
+    
+    # Auto-fix LLM sending 'amount' instead of 'paidAmount'
+    if "amount" in body and "paidAmount" not in body:
+        body["paidAmount"] = body.pop("amount")
+        
     inv_id = m.group(1)
     urls = [f"/invoice/{inv_id}/payment", f"/invoice/{inv_id}/:payment"]
     attempts: list[tuple[str, str]] = []
