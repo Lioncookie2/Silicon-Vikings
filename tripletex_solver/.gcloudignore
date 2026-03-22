@@ -1,0 +1,9 @@
+.git
+.gitignore
+venv/
+temp_files/
+logs/
+__pycache__/
+*.pyc
+.env
+.DS_Store
