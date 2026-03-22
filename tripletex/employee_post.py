@@ -17,15 +17,9 @@ def employee_post_usertype_422(body_text: Any) -> bool:
         blob = json.dumps(body_text, ensure_ascii=False).lower()
     else:
         blob = str(body_text).lower()
-    if "usertype" not in blob:
-        return False
-    return (
-        "korrekt type" in blob
-        or "correct type" in blob
-        or "ikke av korrekt type" in blob
-        or "mapping failed" in blob
-        or "request mapping failed" in blob
-    )
+    if "brukertype kan ikke" in blob or "usertype" in blob or "0" in blob or "tom" in blob:
+        return True
+    return False
 
 
 def execute_post_employee(
