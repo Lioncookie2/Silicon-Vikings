@@ -1,0 +1,12 @@
+{
+  "request_id": "349603a4-46db-4909-9d78-92cad61317c9",
+  "record_count": 29,
+  "uploaded_at": "2026-03-22T11:47:35.767798+00:00",
+  "outcome": "agent_done",
+  "steps_used": 8,
+  "api_error_count": 2,
+  "task_preview": "Sett fastpris 363850 kr på prosjektet \"Nettbutikk-utvikling\" for Havbris AS (org.nr 876325497). Prosjektleder er Ingrid Moe (ingrid.moe@example.org). Fakturer kunden for 75 % av fastprisen som en delb",
+  "had_max_steps": false,
+  "last_error_path": "/invoice",
+  "last_error_status": 422
+}

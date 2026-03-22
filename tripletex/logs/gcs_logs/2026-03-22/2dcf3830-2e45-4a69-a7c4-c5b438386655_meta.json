@@ -1,0 +1,12 @@
+{
+  "request_id": "2dcf3830-2e45-4a69-a7c4-c5b438386655",
+  "record_count": 61,
+  "uploaded_at": "2026-03-22T11:47:04.852462+00:00",
+  "outcome": "agent_done",
+  "steps_used": 16,
+  "api_error_count": 9,
+  "task_preview": "Créez une dimension comptable personnalisée \"Kostsenter\" avec les valeurs \"Kundeservice\" et \"Økonomi\". Puis comptabilisez une pièce sur le compte 7300 pour 10550 NOK, liée à la valeur de dimension \"Ku",
+  "had_max_steps": false,
+  "last_error_path": "/ledger/voucher",
+  "last_error_status": 422
+}

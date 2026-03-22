@@ -1,0 +1,12 @@
+{
+  "request_id": "00bb76fb-517b-496c-b6e3-ff16460c4113",
+  "record_count": 58,
+  "uploaded_at": "2026-03-22T11:35:47.367086+00:00",
+  "outcome": "agent_done",
+  "steps_used": 14,
+  "api_error_count": 8,
+  "task_preview": "Führen Sie den Monatsabschluss für März 2026 durch. Buchen Sie die Rechnungsabgrenzung (6150 NOK pro Monat von Konto 1710 auf Aufwand). Erfassen Sie die monatliche Abschreibung für eine Anlage mit Ans",
+  "had_max_steps": false,
+  "last_error_path": "/ledger/voucher",
+  "last_error_status": 422
+}

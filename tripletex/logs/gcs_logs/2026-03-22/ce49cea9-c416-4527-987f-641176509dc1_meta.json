@@ -1,0 +1,12 @@
+{
+  "request_id": "ce49cea9-c416-4527-987f-641176509dc1",
+  "record_count": 38,
+  "uploaded_at": "2026-03-22T11:33:45.093770+00:00",
+  "outcome": "agent_done",
+  "steps_used": 11,
+  "api_error_count": 1,
+  "task_preview": "Die Zahlung von Windkraft GmbH (Org.-Nr. 823566441) für die Rechnung \"Wartung\" (29500 NOK ohne MwSt.) wurde von der Bank zurückgebucht. Stornieren Sie die Zahlung, damit die Rechnung wieder den offene",
+  "had_max_steps": false,
+  "last_error_path": "/invoice",
+  "last_error_status": 400
+}

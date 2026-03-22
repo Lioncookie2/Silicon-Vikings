@@ -1,0 +1,12 @@
+{
+  "request_id": "5f6bdffc-9490-42f7-a274-292ce995c432",
+  "record_count": 67,
+  "uploaded_at": "2026-03-22T11:49:37.502539+00:00",
+  "outcome": "max_steps",
+  "steps_used": 20,
+  "api_error_count": 4,
+  "task_preview": "Hemos descubierto errores en el libro mayor de enero y febrero de 2026. Revise todos los comprobantes y encuentre los 4 errores: un asiento en la cuenta incorrecta (cuenta 6540 usada en lugar de 6860,",
+  "had_max_steps": true,
+  "last_error_path": "/ledger/voucher/609429710",
+  "last_error_status": 404
+}
