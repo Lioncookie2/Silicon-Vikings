@@ -24,8 +24,11 @@ from typing import Any
 
 import requests as _requests
 
+from .employee_post import execute_post_employee
 from .structured_log import log_event, log_api_error, set_request_id
 from .task_handlers import try_handle_deterministically
+from .task_handlers import ANALYSIS_ONLY, classify_task
+from .task_handlers.activities import validate_activity_body
 from .tripletex_client import TripletexClient
 
 # ── constants ────────────────────────────────────────────────────────────────
@@ -621,98 +624,6 @@ def _sanitize_employee_body(
     return out
 
 
-def _employee_post_usertype_422(body_text: Any) -> bool:
-    """True if error payload suggests userType mapping/type failure on POST /employee."""
-    if isinstance(body_text, dict):
-        blob = json.dumps(body_text, ensure_ascii=False).lower()
-    else:
-        blob = str(body_text).lower()
-    if "usertype" not in blob:
-        return False
-    return (
-        "korrekt type" in blob
-        or "correct type" in blob
-        or "ikke av korrekt type" in blob
-        or "mapping failed" in blob
-        or "request mapping failed" in blob
-    )
-
-
-def _execute_post_employee(client: TripletexClient, path: str, body: dict[str, Any] | None) -> _requests.Response:
-    """POST /employee only. Retries without userType and with userType {{id}} from GET /employee."""
-    if body is None:
-        return client.post(path, json=body)
-    resp = client.post(path, json=body)
-    if resp.status_code < 400:
-        return resp
-    if resp.status_code != 422:
-        return resp
-    try:
-        err_json = resp.json()
-    except Exception:
-        err_json = {}
-    if not _employee_post_usertype_422(err_json):
-        return resp
-
-    if "userType" in body:
-        stripped = {k: v for k, v in body.items() if k != "userType"}
-        r2 = client.post(path, json=stripped)
-        if r2.status_code < 400:
-            return r2
-        resp = r2
-        try:
-            err_json = r2.json()
-        except Exception:
-            err_json = {}
-        if not _employee_post_usertype_422(err_json):
-            return r2
-
-    try:
-        gr = client.get("/employee", params={"fields": "id,userType(id)", "count": 30})
-        if gr.status_code != 200:
-            return resp
-        data = gr.json()
-        base = {k: v for k, v in body.items() if k != "userType"}
-        for emp in data.get("values") or []:
-            ut = emp.get("userType")
-            uid: int | None = None
-            if isinstance(ut, dict) and ut.get("id") is not None:
-                try:
-                    uid = int(ut["id"])
-                except (TypeError, ValueError):
-                    uid = None
-            elif isinstance(ut, int):
-                uid = ut
-            if uid is None:
-                continue
-            r3 = client.post(path, json={**base, "userType": {"id": uid}})
-            if r3.status_code < 400:
-                return r3
-            resp = r3
-
-        # Still userType 422 (greenfield or no usable userType on listed employees) — try enum ids
-        if resp.status_code >= 400:
-            try:
-                ej = resp.json()
-            except Exception:
-                ej = {}
-            if _employee_post_usertype_422(ej):
-                for guess_id in (1, 2, 3, 4, 5):
-                    rx = client.post(path, json={**base, "userType": {"id": guess_id}})
-                    if rx.status_code < 400:
-                        return rx
-                    try:
-                        ej2 = rx.json()
-                    except Exception:
-                        ej2 = {}
-                    if not _employee_post_usertype_422(ej2):
-                        return rx
-                    resp = rx
-    except Exception:
-        pass
-    return resp
-
-
 def _execute_invoice_payment(
     client: TripletexClient,
     method: str,
@@ -776,9 +687,63 @@ def _sanitize_ledger_voucher_postings(
     return {**body, "postings": out}
 
 
+class _SyntheticApiResponse:
+    """Minimal response-like object for preflight validation failures (no HTTP round-trip)."""
+
+    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.text = json.dumps(payload, ensure_ascii=False)
+
+    def json(self) -> Any:
+        return self._payload
+
+
+def _validate_write_call(
+    method: str,
+    path: str,
+    params: dict[str, Any] | None,
+    body: dict[str, Any] | None,
+) -> str | None:
+    """
+    Return a human-readable rejection reason, or None if the call may proceed.
+    Checked before sanitizers mutate the body.
+    """
+    m = method.upper()
+    p_norm = (path or "").rstrip("/")
+
+    if m == "GET" and p_norm == "/employee" and isinstance(params, dict):
+        fields = params.get("fields")
+        if isinstance(fields, str) and re.search(r"[A-Za-z0-9_]\.[A-Za-z_]", fields):
+            return (
+                "GET /employee: do not use dot notation in `fields` "
+                '(e.g. userType.id). Use parentheses: userType(id,name).'
+            )
+
+    if m == "POST" and p_norm == "/activity":
+        return validate_activity_body(body)
+
+    if m == "POST" and p_norm == "/ledger/voucher":
+        if not isinstance(body, dict):
+            return "POST /ledger/voucher requires a JSON body with voucherType:{id} and postings."
+        vt = body.get("voucherType")
+        if not isinstance(vt, dict) or vt.get("id") is None:
+            return "POST /ledger/voucher requires voucherType:{id} from GET /ledger/voucherType."
+        postings = body.get("postings")
+        if isinstance(postings, list):
+            for i, line in enumerate(postings):
+                if isinstance(line, dict) and "row" in line:
+                    return (
+                        "POST /ledger/voucher: remove `row` from postings — "
+                        f"row keys are system-generated (posting index {i})."
+                    )
+
+    return None
+
+
 def _execute_call(
     client: TripletexClient, action: dict[str, Any]
-) -> _requests.Response:
+) -> _requests.Response | _SyntheticApiResponse:
     method = (action.get("method") or "GET").upper()
     path = action.get("path") or "/"
     params = action.get("params")
@@ -788,6 +753,23 @@ def _execute_call(
         params = None
     if not isinstance(body, dict):
         body = None
+
+    pre_err = _validate_write_call(method, path, params, body)
+    if pre_err is not None:
+        log_event(
+            "WARNING",
+            "api_precheck_rejected",
+            method=method,
+            path=path,
+            detail=pre_err[:500],
+        )
+        return _SyntheticApiResponse(
+            422,
+            {
+                "message": "Preflight validation rejected request (not sent to Tripletex).",
+                "validationMessages": [{"message": pre_err}],
+            },
+        )
 
     body = _sanitize_ledger_voucher_postings(body, method, path)
     body = _sanitize_employee_body(body, method, path)
@@ -802,7 +784,7 @@ def _execute_call(
     elif method == "POST":
         p_norm = (path or "").rstrip("/")
         if p_norm == "/employee":
-            return _execute_post_employee(client, path, body)
+            return execute_post_employee(client, path, body)
         return client.post(path, json=body)
     elif method == "PUT":
         return client.put(path, json=body)
@@ -1043,7 +1025,9 @@ def solve(
     history_start = f"{date.today().year - 3}-01-01"
 
     # Try a deterministic handler before falling back to the LLM agent loop
-    if not files and try_handle_deterministically(prompt, client, today, year_start):
+    if not files and try_handle_deterministically(
+        prompt, client, today, year_start, file_context=file_context
+    ):
         log_event("INFO", "deterministic_handler", result="task handled without LLM")
         log_event(
             "INFO",
@@ -1066,8 +1050,15 @@ def solve(
     # Build initial user message
     user_message_parts = [
         f"TODAY: {today}\nYEAR_START: {year_start}\nHISTORY_START: {history_start}",
-        "TASK:\n" + prompt,
     ]
+    if classify_task(prompt, file_context) == ANALYSIS_ONLY:
+        user_message_parts.append(
+            "IMPORTANT: This task is classified as ANALYSIS-ONLY. "
+            "Use ONLY GET API calls. Do NOT create projects, activities, vouchers, "
+            "employees, customers, or any other objects. "
+            "When finished, output {\"action\":\"done\",\"reasoning\":\"...\"} with your findings."
+        )
+    user_message_parts.append("TASK:\n" + prompt)
     if file_context:
         user_message_parts.append("ATTACHED FILES:\n" + file_context)
     user_message_parts.append(
@@ -1131,7 +1122,16 @@ def solve(
 
         if action_type == "done":
             finished_via_done = True
-            log_event("INFO", "agent_done", step=step, reasoning=str(action.get("reasoning", ""))[:400])
+            reasoning = str(action.get("reasoning", ""))
+            if run_stats["api_error_count"] > 0:
+                reasoning += (
+                    f" Completed despite {run_stats['api_error_count']} API error(s); "
+                    f"last failing path: {run_stats['last_error_path'] or 'n/a'} "
+                    f"(HTTP {run_stats['last_error_status']})."
+                )
+                action["reasoning"] = reasoning
+                messages[-1] = {"role": "assistant", "content": json.dumps(action)}
+            log_event("INFO", "agent_done", step=step, reasoning=reasoning[:400])
             break
 
         if action_type != "call":

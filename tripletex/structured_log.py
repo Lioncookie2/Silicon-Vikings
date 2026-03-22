@@ -21,6 +21,8 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
+from .run_artifacts import record_structured_payload
+
 # Per-request context variable — set once in main.py, read everywhere
 _request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
@@ -72,6 +74,9 @@ def _build_rich_message(
         "had_max_steps",
         "last_error_status",
         "last_error_path",
+        "path_streak",
+        "path_streak_limit",
+        "reason",
     ):
         if key in payload and payload[key] is not None:
             val = payload[key]
@@ -145,6 +150,8 @@ def log_event(
     payload["message"] = _build_rich_message(message, rid, payload)
     # GCP sometimes treats top-level `message` specially; keep a duplicate for queries.
     payload["agent_log"] = payload["message"]
+
+    record_structured_payload(payload)
 
     # Plain line on stderr so `gcloud run services logs read` always shows readable text
     print("[tripletex] " + payload["message"], file=sys.stderr, flush=True)

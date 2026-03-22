@@ -27,7 +27,7 @@ def _list_invoices(
     params: dict = {
         "invoiceDateFrom": year_start,
         "invoiceDateTo": today,
-        "fields": "id,invoiceNumber,customer,amountCurrency,invoiceDate,dueDate,amount",
+        "fields": "id,invoiceNumber,customer,amountCurrency,invoiceDate,invoiceDueDate,amount",
         "count": 100,
     }
     if customer_id is not None:
