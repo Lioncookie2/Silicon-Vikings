@@ -15,6 +15,7 @@ EMPLOYEE_ONBOARDING = "employee_onboarding"
 CREATE_CUSTOMER = "create_customer"
 CREATE_PROJECT = "create_project"
 CREATE_ACTIVITY = "create_activity"
+CREATE_VOUCHER = "create_voucher"
 SUPPLIER_INVOICE = "supplier_invoice"
 INVOICE_PAYMENT = "invoice_payment"
 LEDGER_CORRECTION = "ledger_correction"
@@ -168,6 +169,12 @@ def classify_task(prompt: str, file_context: str = "") -> str:
         t,
     ):
         return CREATE_PROJECT
+
+    if _matches_any(
+        (r"\bopprett\b.*\bbilag\b", r"\bcreate\b.*\bvoucher\b", r"\bnytt bilag\b", r"\bregistrer\b.*\bbilag\b"),
+        t,
+    ):
+        return CREATE_VOUCHER
 
     if _matches_any(
         (

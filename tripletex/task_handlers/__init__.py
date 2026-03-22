@@ -13,22 +13,24 @@ Usage in solve():
 from __future__ import annotations
 
 from .activities import handle_create_activity
-from .classifier import (
-    ANALYSIS_ONLY,
-    CREATE_ACTIVITY,
-    CREATE_CUSTOMER,
-    CREATE_DEPARTMENTS,
-    CREATE_EMPLOYEE,
-    CREATE_PROJECT,
-    EMPLOYEE_ONBOARDING,
-    INVOICE_PAYMENT,
-    classify_task,
-)
+    from .classifier import (
+        ANALYSIS_ONLY,
+        CREATE_ACTIVITY,
+        CREATE_CUSTOMER,
+        CREATE_DEPARTMENTS,
+        CREATE_EMPLOYEE,
+        CREATE_PROJECT,
+        CREATE_VOUCHER,
+        EMPLOYEE_ONBOARDING,
+        INVOICE_PAYMENT,
+        classify_task,
+    )
 from .customers import handle_create_customer
 from .departments import handle_department_batch_task
 from .employees import handle_create_employee
 from .invoices import handle_invoice_task
 from .projects import handle_create_project
+from .vouchers import handle_create_voucher
 from ..tripletex_client import TripletexClient
 
 __all__ = [
@@ -73,6 +75,10 @@ def try_handle_deterministically(
 
     if task_type == CREATE_ACTIVITY:
         if handle_create_activity(prompt, client):
+            return True
+
+    if task_type == CREATE_VOUCHER:
+        if handle_create_voucher(prompt, client, today, year_start):
             return True
 
     # Invoice-related tasks (keyword + classifier)

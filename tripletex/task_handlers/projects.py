@@ -1,16 +1,54 @@
 """Deterministic project creation (projectManager from GET /employee)."""
 from __future__ import annotations
 
+import json
+import os
 import re
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 from ..structured_log import log_event
 from ..tripletex_client import TripletexClient
+
+
+class ProjectExtractor(BaseModel):
+    name: str | None = Field(default=None, description="The name of the project to create")
+    customer_name_hint: str | None = Field(default=None, description="The name of the customer, if specified")
+    start_date: str | None = Field(default=None, description="The start date in YYYY-MM-DD format, if specified")
 
 
 def _parse_project_fields(
     prompt: str, today: str
 ) -> tuple[str | None, str | None, str | None]:
     """project_name, customer_name_hint, start_date ISO"""
+    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if key:
+        try:
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=key)
+            model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+            
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=f"Extract project details. Today is {today}.",
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                    response_schema=ProjectExtractor,
+                ),
+            )
+            if resp.text:
+                data = json.loads(resp.text)
+                ex = ProjectExtractor.model_validate(data)
+                return ex.name, ex.customer_name_hint, ex.start_date or today
+        except Exception as e:
+            log_event("WARNING", "project_llm_extract_failed", error=str(e))
+            pass
+            
+    # Fallback to regex
     pname = None
     m = re.search(
         r"(?:prosjekt|project)\s*[\"«]([^\"»]+)[\"»]",
